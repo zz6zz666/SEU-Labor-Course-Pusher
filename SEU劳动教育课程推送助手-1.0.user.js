@@ -1,7 +1,8 @@
 // ==UserScript==
-// @name         SEU 劳动教育课程推送助手
+// @name         SEU劳动教育课程推送助手
 // @namespace    http://tampermonkey.net/
 // @version      1.0
+// @license      MIT
 // @description  东南大学劳动教育选课神器！实时监控新增课程并微信推送，打开浏览器就会后台自动运行，无需频繁登录查询即可获取所在校区的最新劳动教育实践课程信息
 // @author       zz6zz666@github with AI support
 // @match        *://*/*
@@ -17,8 +18,9 @@
 
     // ==================== 全局配置区（用户可自定义）====================
     // 【后台页面活性维持配置】
-    const COOLDOWN = 20 * 1000;        // 冷却时间（单位：毫秒）- 非目标页面创建新标签页的间隔
-    const CHECK_INTERVAL = 5 * 1000;   // 检查/报活间隔（单位：毫秒）- 定时检查页面状态的频率
+    const COOLDOWN = 180 * 1000;        // 冷却时间（单位：毫秒）- 非目标页面创建新标签页的最小时间间隔
+    const HEARTBEAT_INTERVAL = 20 * 1000;   // 报活间隔 - 通过目标页面的持续报活来防止重复创建标签页
+    const CHECK_INTERVAL = 60 * 1000;       // 检查间隔 - 非目标页面定时检查是否需要创建新标签页
 
     // 【登录与推送配置】
     const USERNAME = '12345678';       // 替换为你的一卡通号
@@ -54,6 +56,7 @@
             }),
             onload: function(response) {
                 console.log('%c【推送成功】', 'color:green; font-weight:bold;');
+                console.log(response.responseText);
             },
             onerror: function(error) {
                 console.error('【推送失败】', error);
@@ -86,7 +89,7 @@
             console.log(`[页面活性] 目标页面报活，时间：${new Date(now).toLocaleTimeString()}`);
         }
         updateLastActive();
-        setInterval(updateLastActive, CHECK_INTERVAL);
+        setInterval(updateLastActive, HEARTBEAT_INTERVAL);
     }
 
     /**
@@ -251,12 +254,22 @@
      * @returns {Object} - 课程信息对象
      */
     function extractCourseInfo(row) {
-        const originalTime = cleanText(row.querySelector('td:nth-child(9)').textContent);
+        // 辅助函数：判断文本是否为纯数字
+        const isPureNumber = (text) => /^\d+$/.test(text.trim());
+
+        // 获取第1列和第2列文本，判断序号所在列
+        const col1Text = cleanText(row.querySelector('td:nth-child(1)')?.textContent || '');
+        const col2Text = cleanText(row.querySelector('td:nth-child(2)')?.textContent || '');
+        const isIndexInCol1 = isPureNumber(col1Text) && !isPureNumber(col2Text);
+        const offset = isIndexInCol1 ? 0 : 1; // 序号在第1列时所有列索引减1（向前挪一位）
+
+        // 根据偏移计算实际列索引
+        const originalTime = cleanText(row.querySelector(`td:nth-child(${8 + offset})`).textContent);
         const weekday = getWeekday(originalTime);
-        const 选课状态 = cleanText(row.querySelector('td:nth-child(11)').textContent);
-        const 截止状态 = cleanText(row.querySelector('td:nth-child(10)').textContent);
-        const 开课地点 = cleanText(row.querySelector('td:nth-child(8) .limit-line')?.textContent);
-        const 项目名称 = cleanText(row.querySelector('td:nth-child(4)').textContent);
+        const 选课状态 = cleanText(row.querySelector(`td:nth-child(${10 + offset})`).textContent);
+        const 截止状态 = cleanText(row.querySelector(`td:nth-child(${9 + offset})`).textContent);
+        const 开课地点 = cleanText(row.querySelector(`td:nth-child(${7 + offset}) .limit-line`)?.textContent);
+        const 项目名称 = cleanText(row.querySelector(`td:nth-child(${3 + offset})`).textContent);
         const 实施时间 = weekday ? `${originalTime}（${weekday}）` : originalTime;
 
         // 核心：使用「项目名称+实施时间」作为唯一标识（避免重名）
@@ -269,19 +282,19 @@
 
         // 判断地点是否符合配置
         const locationMatch = LOCATION_FILTERS.length === 0
-            ? true
-            : LOCATION_FILTERS.some(filter => 开课地点.includes(filter));
+        ? true
+        : LOCATION_FILTERS.some(filter => 开课地点?.includes(filter));
 
         return {
             uniqueId,
-            序号: cleanText(row.querySelector('td:nth-child(2)').textContent),
+            序号: isIndexInCol1 ? col1Text : col2Text, // 序号取纯数字所在列
             项目名称,
-            项目类别: cleanText(row.querySelector('td:nth-child(5)').textContent),
+            项目类别: cleanText(row.querySelector(`td:nth-child(${4 + offset})`).textContent),
             开课地点,
             实施时间,
             选课截止时间: 截止状态,
             选课人数_容纳人数: 选课状态,
-            授课教师: cleanText(row.querySelector('td:nth-child(16)').textContent),
+            授课教师: cleanText(row.querySelector(`td:nth-child(${15 + offset})`).textContent),
             isInvalid,
             locationMatch
         };
