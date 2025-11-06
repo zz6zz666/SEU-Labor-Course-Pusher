@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEU劳动教育课程推送助手
 // @namespace    http://tampermonkey.net/
-// @version      2.3
+// @version      2.4
 // @license      MIT
 // @description  东南大学劳动教育选课神器！实时监控新增课程并微信推送，移动端后台稳定运行，当然你也可以选择在电脑上安装
 // @author       zz6zz666@github with AI support
