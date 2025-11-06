@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         SEU劳动教育课程推送助手
 // @namespace    http://tampermonkey.net/
-// @version      2.0
+// @version      2.1
 // @license      MIT
-// @description  东南大学劳动教育选课神器！实时监控新增课程并微信推送，打开浏览器就会后台自动运行，无需频繁登录查询即可获取所在校区的最新劳动教育实践课程信息
+// @description  东南大学劳动教育选课神器！实时监控新增课程并微信推送，移动端后台稳定运行
 // @author       zz6zz666@github with AI support
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -11,6 +11,8 @@
 // @grant        GM_getValue
 // @grant        GM_openInTab
 // @run-at       document-end
+// @downloadURL  https://update.greasyfork.org/scripts/554904/SEU%E5%8A%B3%E5%8A%A8%E6%95%99%E8%82%B2%E8%AF%BE%E7%A8%8B%E6%8E%A8%E9%80%81%E5%8A%A9%E6%89%8B.user.js
+// @updateURL    https://update.greasyfork.org/scripts/554904/SEU%E5%8A%B3%E5%8A%A8%E6%95%99%E8%82%B2%E8%AF%BE%E7%A8%8B%E6%8E%A8%E9%80%81%E5%8A%A9%E6%89%8B.meta.js
 // ==/UserScript==
 
 (function () {
@@ -18,9 +20,10 @@
 
     // ==================== 全局配置区（用户可自定义）====================
     // 【后台页面活性维持配置】
-    const COOLDOWN = 180 * 1000;        // 冷却时间（单位：毫秒）- 非目标页面创建新标签页的最小时间间隔
-    const HEARTBEAT_INTERVAL = 20 * 1000;   // 报活间隔 - 通过目标页面的持续报活来防止重复创建标签页
-    const CHECK_INTERVAL = 60 * 1000;       // 检查间隔 - 非目标页面定时检查是否需要创建新标签页
+    const COOLDOWN = 180 * 1000;        // 冷却时间（单位：毫秒）
+    const HEARTBEAT_INTERVAL = 15 * 1000;   // 心跳间隔
+    const CHECK_INTERVAL = 60 * 1000;       // 检查间隔
+    const HEARTBEAT_URL = 'https://labor.seu.edu.cn/favicon.ico'; // 用于心跳的轻量资源
 
     // 【登录与推送配置】
     const USERNAME = '12345678';       // 替换为你的一卡通号
@@ -34,11 +37,6 @@
     // =================================================================
 
     // ==================== 工具函数 ====================
-    /**
-     * 发送微信推送（支持自定义标题）
-     * @param {string} title - 推送标题
-     * @param {string} content - 推送内容（Markdown格式）
-     */
     function pushToWechat(title, content) {
         if (!PUSHPLUS_TOKEN) {
             console.error('【错误】请填写PushPlus Token');
@@ -56,7 +54,6 @@
             }),
             onload: function(response) {
                 console.log('%c【推送成功】', 'color:green; font-weight:bold;');
-                console.log(response.responseText);
             },
             onerror: function(error) {
                 console.error('【推送失败】', error);
@@ -64,10 +61,6 @@
         });
     }
 
-    /**
-     * 检查是否需要禁用自动登录
-     * @returns {boolean} - 是否在登录失败冷却期内
-     */
     function shouldDisableLogin() {
         const lastFailTime = GM_getValue('loginFailTime', 0);
         const now = Date.now();
@@ -75,31 +68,77 @@
     }
     // =================================================
 
-    // ==================== 后台页面活性维持逻辑 ====================
+    // ==================== 移动端活性维持增强逻辑 ====================
     const currentUrl = window.location.href;
     const LOGIN_LABOR_URL = "https://auth.seu.edu.cn/dist/#/dist/main/login?service=https://labor.seu.edu.cn/UnifiedAuth/CASLogin";
 
     /**
-     * 目标页面报活逻辑（持续更新最后活跃时间）
+     * 发送轻量心跳请求（兼容移动端后台）
+     * 利用浏览器对同域请求的优先级优待，减少被休眠的概率
+     */
+    function sendHeartbeat() {
+        // 带时间戳避免缓存，确保请求实际发送
+        const url = `${HEARTBEAT_URL}?ts=${Date.now()}`;
+        return fetch(url, {
+            method: 'HEAD', // 只请求头，减少数据传输
+            keepalive: true, // 确保页面隐藏时仍能发送
+            cache: 'no-store'
+        }).then(() => {
+            const now = Date.now();
+            GM_setValue('lastTargetActive', now);
+            console.log(`[心跳成功] ${new Date(now).toLocaleTimeString()}`);
+        }).catch(err => {
+            console.log(`[心跳失败] 重试中... ${err.message}`);
+            // 失败时立即重试一次
+            setTimeout(sendHeartbeat, 3000);
+        });
+    }
+
+    /**
+     * 增强版目标页面活性维持
+     * 结合心跳请求+定时器策略，对抗移动端后台休眠
      */
     function handleTargetPage() {
+        // 立即发送一次心跳初始化
+        sendHeartbeat();
+
+        // 核心：使用不等间隔的定时器，避免浏览器识别为周期性任务而延迟
+        let intervalOffset = 0; // 动态偏移量，避免固定间隔被优化
+        const startHeartbeatLoop = () => {
+            // 每次间隔在基础时间上±10%波动，减少规律性
+            const randomOffset = Math.floor(HEARTBEAT_INTERVAL * (0.9 + Math.random() * 0.2));
+            intervalOffset = (intervalOffset + 1) % 5; // 避免偏移累积
+
+            const timer = setTimeout(() => {
+                // 检测页面可见性，可见时额外更新一次状态
+                if (document.visibilityState === 'visible') {
+                    GM_setValue('lastTargetActive', Date.now());
+                }
+                sendHeartbeat();
+                startHeartbeatLoop(); // 递归调用，保持循环
+            }, randomOffset + intervalOffset * 100);
+
+            // 监听页面可见性变化，立即发送心跳
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') {
+                    clearTimeout(timer);
+                    sendHeartbeat();
+                    startHeartbeatLoop();
+                }
+            }, { once: true });
+        };
+
+        startHeartbeatLoop();
+    }
+
+    /**
+     * 非目标页面检查逻辑（保持不变）
+     */
+    function handleNonTargetPage() {
         if (shouldDisableLogin) {
             console.log('[页面活性] 登录失败冷却期内，暂不创建新标签页');
             return;
         }
-        function updateLastActive() {
-            const now = Date.now();
-            GM_setValue('lastTargetActive', now);
-            console.log(`[页面活性] 目标页面报活，时间：${new Date(now).toLocaleTimeString()}`);
-        }
-        updateLastActive();
-        setInterval(updateLastActive, HEARTBEAT_INTERVAL);
-    }
-
-    /**
-     * 非目标页面检查逻辑（定时判断是否创建新标签页）
-     */
-    function handleNonTargetPage() {
         function checkAndCreate() {
             const lastActive = GM_getValue('lastTargetActive', 0);
             const now = Date.now();
@@ -120,6 +159,7 @@
         setInterval(checkAndCreate, CHECK_INTERVAL);
     }
 
+    // 启动活性维持逻辑
     if (currentUrl.includes('labor.seu.edu.cn') || currentUrl.includes('auth.seu.edu.cn/dist')) {
         handleTargetPage();
     } else {
@@ -127,19 +167,16 @@
     }
     // ==============================================================
 
-    // ==================== 自动登录与选课跳转逻辑 ====================
-    /**
-     * 登录页自动登录处理
-     */
+    // ==================== 自动登录与选课跳转逻辑（保持不变）====================
     function handleLoginPage() {
         if (shouldDisableLogin()) {
             const lastFailTime = new Date(GM_getValue('loginFailTime', 0)).toLocaleString();
             console.log(`[自动登录] 登录失败后禁用期内（上次失败时间：${lastFailTime}），暂不执行自动登录`);
             return;
         }
-    
+
         console.log('[自动登录] 检测到登录页，开始自动登录...');
-    
+
         let loginSuccess = false;
         const loginTimer = setTimeout(() => {
             if (!loginSuccess) {
@@ -150,7 +187,7 @@
                 `## 统一身份认证登录超时\n\n⚠️ 登录尝试超过${LOGIN_TIMEOUT/1000}秒未跳转，可能是以下原因：\n1. 需要短信验证码\n2. 账号密码错误\n3. 系统临时故障\n\n请手动登录检查状态\n时间：${new Date().toLocaleString()}`);
             }
         }, LOGIN_TIMEOUT);
-    
+
         // 监听页面跳转判断登录成功
         const originalPushState = history.pushState;
         history.pushState = function(...args) {
@@ -158,37 +195,37 @@
             clearTimeout(loginTimer);
             return originalPushState.apply(this, args);
         };
-    
+
         window.addEventListener('beforeunload', () => {
             loginSuccess = true;
             clearTimeout(loginTimer);
         });
-    
+
         // 等待登录元素加载
         const waitForElements = () => {
-            // ---------- 适配PC和移动端的用户名输入框 ----------
-            const usernameInput = document.querySelector('input.input-username-pc[type="text"]') || // PC端类名
-                                  document.querySelector('input.input-username-mobile[type="text"]') || // 移动端类名
-                                  document.querySelector('input[type="text"][placeholder*="一卡通号"], input[type="text"][placeholder*="学号"]'); // 通用placeholder匹配
-    
-            // ---------- 适配PC和移动端的密码输入框 ----------
-            const passwordInput = document.querySelector('input[type="password"]') || // 原生password类型
-                                  document.querySelector('input.input-password-pc') || // PC端类名
-                                  document.querySelector('input.input-password-mobile input.ant-input'); // 移动端嵌套结构
-    
-            // ---------- 适配PC和移动端的登录按钮 ----------
-            const loginButton = document.querySelector('button.login-button-pc') || // PC端类名
-                                document.querySelector('button[type="button"].ant-btn-primary') || // 移动端通用主按钮
-                                document.querySelector('button[type="button"]'); // 兜底匹配
-    
+            // 适配PC和移动端的用户名输入框
+            const usernameInput = document.querySelector('input.input-username-pc[type="text"]') ||
+                                document.querySelector('input.input-username-mobile[type="text"]') ||
+                                document.querySelector('input[type="text"][placeholder*="一卡通号"], input[type="text"][placeholder*="学号"]');
+
+            // 适配PC和移动端的密码输入框
+            const passwordInput = document.querySelector('input[type="password"]') ||
+                                document.querySelector('input.input-password-pc') ||
+                                document.querySelector('input.input-password-mobile input.ant-input');
+
+            // 适配PC和移动端的登录按钮
+            const loginButton = document.querySelector('button.login-button-pc') ||
+                                document.querySelector('button[type="button"].ant-btn-primary') ||
+                                document.querySelector('button[type="button"]');
+
             if (!usernameInput || !passwordInput || !loginButton) {
                 console.log('[自动登录] 元素未找到，500ms 后重试...');
                 setTimeout(waitForElements, 500);
                 return;
             }
-    
+
             console.log('[自动登录] 找到输入框，等待 3 秒后输入信息...');
-    
+
             setTimeout(() => {
                 // 强制设置输入值（兼容React等框架）
                 const forceSetValue = (input, value) => {
@@ -200,10 +237,10 @@
                     if (tracker) tracker.setValue(lastValue);
                     input.dispatchEvent(event);
                 };
-    
+
                 forceSetValue(usernameInput, USERNAME);
                 forceSetValue(passwordInput, PASSWORD);
-    
+
                 setTimeout(() => {
                     if (!loginButton.disabled) {
                         console.log('[自动登录] 点击登录按钮...');
@@ -215,13 +252,10 @@
                 }, 500);
             }, 3000);
         };
-    
+
         setTimeout(waitForElements, 1000);
     }
 
-    /**
-     * 劳动教育首页跳转选课页
-     */
     function handleLaborHomePage() {
         console.log('[页面跳转] 检测到劳动教育首页，准备跳转选课页...');
 
@@ -237,12 +271,7 @@
     }
     // ==============================================================
 
-    // ==================== 课程监控与推送逻辑 ====================
-    /**
-     * 获取日期对应的星期
-     * @param {string} dateStr - 日期字符串
-     * @returns {string} - 星期（如“周二”）
-     */
+    // ==================== 课程监控与推送逻辑（保持不变）====================
     function getWeekday(dateStr) {
         if (!dateStr) return '';
         const dateMatch = dateStr.match(/\d{4}-\d{2}-\d{2}/);
@@ -251,29 +280,15 @@
         return isNaN(date.getTime()) ? '' : ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][date.getDay()];
     }
 
-    /**
-     * 清除文本多余空格/换行
-     * @param {string} text - 原始文本
-     * @returns {string} - 清理后的文本
-     */
     const cleanText = (text) => text ? text.trim().replace(/\s+/g, ' ') : '无';
 
-    /**
-     * 提取课程信息（含唯一标识）
-     * @param {Element} row - 课程行元素
-     * @returns {Object} - 课程信息对象
-     */
     function extractCourseInfo(row) {
-        // 辅助函数：判断文本是否为纯数字
         const isPureNumber = (text) => /^\d+$/.test(text.trim());
-
-        // 获取第1列和第2列文本，判断序号所在列
         const col1Text = cleanText(row.querySelector('td:nth-child(1)')?.textContent || '');
         const col2Text = cleanText(row.querySelector('td:nth-child(2)')?.textContent || '');
         const isIndexInCol1 = isPureNumber(col1Text) && !isPureNumber(col2Text);
-        const offset = isIndexInCol1 ? 0 : 1; // 序号在第1列时所有列索引减1（向前挪一位）
+        const offset = isIndexInCol1 ? 0 : 1;
 
-        // 根据偏移计算实际列索引
         const originalTime = cleanText(row.querySelector(`td:nth-child(${8 + offset})`).textContent);
         const weekday = getWeekday(originalTime);
         const 选课状态 = cleanText(row.querySelector(`td:nth-child(${10 + offset})`).textContent);
@@ -282,22 +297,17 @@
         const 项目名称 = cleanText(row.querySelector(`td:nth-child(${3 + offset})`).textContent);
         const 实施时间 = weekday ? `${originalTime}（${weekday}）` : originalTime;
 
-        // 核心：使用「项目名称+实施时间」作为唯一标识（避免重名）
         const uniqueId = `${项目名称}|${实施时间}`;
-
-        // 判断是否已满或已截止
         const isFull = 选课状态.includes('已满');
         const isExpired = 截止状态.includes('已截止');
         const isInvalid = isFull || isExpired;
-
-        // 判断地点是否符合配置
         const locationMatch = LOCATION_FILTERS.length === 0
-        ? true
-        : LOCATION_FILTERS.some(filter => 开课地点?.includes(filter));
+            ? true
+            : LOCATION_FILTERS.some(filter => 开课地点?.includes(filter));
 
         return {
             uniqueId,
-            序号: isIndexInCol1 ? col1Text : col2Text, // 序号取纯数字所在列
+            序号: isIndexInCol1 ? col1Text : col2Text,
             项目名称,
             项目类别: cleanText(row.querySelector(`td:nth-child(${4 + offset})`).textContent),
             开课地点,
@@ -310,13 +320,9 @@
         };
     }
 
-    /**
-     * 选课页课程监控与推送
-     */
     function handleCoursePage() {
         console.log('[课程监控] 检测到选课页面，开始处理选课信息...');
 
-        // 清除登录失败状态
         GM_setValue('loginFailStatus', false);
         GM_setValue('loginFailTime', 0);
 
@@ -332,75 +338,41 @@
                 return;
             }
 
-            // 提取并筛选课程
             let allCourses = Array.from(courseRows).map(row => extractCourseInfo(row));
-            const validCourses = allCourses.filter(course => {
-                return course.locationMatch && !course.isInvalid;
-            });
+            const validCourses = allCourses.filter(course => course.locationMatch && !course.isInvalid);
 
-            console.log('%c[课程监控] 符合推送条件的课程（未失效+地点匹配）', 'color:#2E86AB; font-size:16px; font-weight:bold;');
-            console.log(`共 ${validCourses.length} 门：`, validCourses);
+            console.log('%c[课程监控] 符合推送条件的课程', 'color:#2E86AB; font-weight:bold;');
+            console.log(`共 ${validCourses.length} 门`, validCourses);
 
-            // 本地存储处理
             const storedUniqueIds = GM_getValue('pushedCourseUniqueIds', []);
-            console.log('%c[课程监控] 本地存储初始状态', 'color:#7B2CBF; font-weight:bold;');
-            console.log('已存储的推送课程唯一标识：', storedUniqueIds);
-
             let pushedUniqueIds = new Set(storedUniqueIds);
-            const currentValidUniqueIds = new Set(validCourses.map(course => course.uniqueId));
-
-            // 筛选新课程
             const newCourses = validCourses.filter(course => !pushedUniqueIds.has(course.uniqueId));
-            console.log('%c[课程监控] 新课程检测', 'color:#7B2CBF; font-weight:bold;');
-            console.log('本次新增符合条件的课程：', newCourses.map(c => c.uniqueId));
 
             // 清理过期课程
             const allCurrentUniqueIds = new Set(allCourses.map(c => c.uniqueId));
-            const currentInvalidUniqueIds = Array.from(allCurrentUniqueIds).filter(id => {
-                const course = allCourses.find(c => c.uniqueId === id);
-                return course?.isInvalid;
-            });
-            const currentLocationMismatchUniqueIds = Array.from(allCurrentUniqueIds).filter(id => {
-                const course = allCourses.find(c => c.uniqueId === id);
-                return !course?.locationMatch;
-            });
+            const expiredUniqueIds = Array.from(pushedUniqueIds).filter(id => !allCurrentUniqueIds.has(id) ||
+                allCourses.find(c => c.uniqueId === id)?.isInvalid ||
+                !allCourses.find(c => c.uniqueId === id)?.locationMatch
+            );
+            expiredUniqueIds.forEach(id => pushedUniqueIds.delete(id));
+            GM_setValue('pushedCourseUniqueIds', Array.from(pushedUniqueIds));
 
-            const expiredUniqueIds = Array.from(pushedUniqueIds).filter(id => {
-                return !allCurrentUniqueIds.has(id)
-                    || currentInvalidUniqueIds.includes(id)
-                    || currentLocationMismatchUniqueIds.includes(id);
-            });
-
-            console.log('%c[课程监控] 过期课程清理', 'color:#7B2CBF; font-weight:bold;');
-            console.log('待清理的课程唯一标识：', expiredUniqueIds);
-
-            if (expiredUniqueIds.length > 0) {
-                expiredUniqueIds.forEach(id => pushedUniqueIds.delete(id));
-                const updatedAfterClean = Array.from(pushedUniqueIds);
-                GM_setValue('pushedCourseUniqueIds', updatedAfterClean);
-                console.log('清理后同步到本地的课程唯一标识：', updatedAfterClean);
-            }
-
-            // 格式化推送内容
-            function formatToMarkdown(courses) {
-                if (courses.length === 0) return '当前无新增有效课程';
-                let md = '| 序号 | 项目名称 | 项目类别 | 实施时间 | 开课地点 | 选课情况 | 教师 |\n';
-                md += '|------|----------|----------|----------|----------|----------|------|\n';
-                courses.forEach(course => {
-                    md += `| ${course.序号} | ${course.项目名称} | ${course.项目类别} | ${course.实施时间} | ${course.开课地点} | ${course.选课人数_容纳人数} | ${course.授课教师} |\n`;
-                });
-                return md + `\n提取时间：${new Date().toLocaleString()}`;
-            }
-
-            // 执行推送
+            // 推送新课程
             if (newCourses.length > 0) {
-                console.log(`%c[课程监控] 发现 ${newCourses.length} 门符合条件的新课程，准备推送`, 'color:green;');
+                console.log(`%c[课程监控] 发现 ${newCourses.length} 门新课程，准备推送`, 'color:green;');
+                const formatToMarkdown = (courses) => {
+                    let md = '| 序号 | 项目名称 | 项目类别 | 实施时间 | 开课地点 | 选课情况 | 教师 |\n';
+                    md += '|------|----------|----------|----------|----------|----------|------|\n';
+                    courses.forEach(course => {
+                        md += `| ${course.序号} | ${course.项目名称} | ${course.项目类别} | ${course.实施时间} | ${course.开课地点} | ${course.选课人数_容纳人数} | ${course.授课教师} |\n`;
+                    });
+                    return md + `\n提取时间：${new Date().toLocaleString()}`;
+                };
                 pushToWechat(PUSH_TITLE, formatToMarkdown(newCourses));
-                // 更新存储
                 newCourses.forEach(course => pushedUniqueIds.add(course.uniqueId));
                 GM_setValue('pushedCourseUniqueIds', Array.from(pushedUniqueIds));
             } else {
-                console.log('[课程监控] 提示：无符合条件的新课程需要推送');
+                console.log('[课程监控] 无新增课程');
             }
 
             // 定时刷新
