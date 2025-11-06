@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEU劳动教育课程推送助手
 // @namespace    http://tampermonkey.net/
-// @version      2.4
+// @version      2.5
 // @license      MIT
 // @description  东南大学劳动教育选课神器！实时监控新增课程并微信推送，移动端后台稳定运行，当然你也可以选择在电脑上安装
 // @author       zz6zz666@github with AI support
@@ -20,21 +20,22 @@
     'use strict';
 
     // ==================== 全局配置区（用户可自定义）====================
-    // 【后台页面活性维持配置】
-    const COOLDOWN = 90 * 1000;        // 冷却时间（单位：毫秒）
-    const HEARTBEAT_INTERVAL = 15 * 1000;   // 心跳间隔
-    const CHECK_INTERVAL = 60 * 1000;       // 检查间隔
-    const HEARTBEAT_URL = 'https://labor.seu.edu.cn/favicon.ico'; // 用于心跳的轻量资源
-
     // 【登录与推送配置】
     const USERNAME = '12345678';       // 替换为你的一卡通号
     const PASSWORD = 'abc123456';      // 替换为你的密码
     const PUSHPLUS_TOKEN = 'ce0**********************************11'; // 替换为你的PushPlus Token
     const PUSH_TITLE = '劳动教育课程推送'; // 微信推送标题
     const LOCATION_FILTERS = [];       // 校区筛选，如['四牌楼校区', '九龙湖校区']，为空则不筛选
+    const CATEGORY_FILTERS = [];       // 劳动类别筛选，如['服务劳动']，为空则不筛选（完全匹配）
     const REFRESH_INTERVAL = 3 * 60 * 1000; // 选课页自动刷新间隔（单位：毫秒）
     const LOGIN_TIMEOUT = 10 * 1000;  // 登录超时检测时间（单位：毫秒）
     const LOGIN_DISABLE_DURATION = 15 * 60 * 1000; // 登录失败后禁用自动登录时长（单位：毫秒）
+
+    // 【后台页面活性维持配置】
+    const COOLDOWN = 180 * 1000;        // 冷却时间（单位：毫秒）
+    const HEARTBEAT_INTERVAL = 15 * 1000;   // 心跳间隔
+    const CHECK_INTERVAL = 60 * 1000;       // 检查间隔
+    const HEARTBEAT_URL = 'https://labor.seu.edu.cn/favicon.ico'; // 用于心跳的轻量资源
     // =================================================================
 
     // ==================== 工具函数 ====================
@@ -324,9 +325,13 @@
         const isFull = 选课状态.includes('已满');
         const isExpired = 截止状态.includes('已截止');
         const isInvalid = isFull || isExpired;
+
         const locationMatch = LOCATION_FILTERS.length === 0
             ? true
             : LOCATION_FILTERS.some(filter => 开课地点?.includes(filter));
+        const categoryMatch = CATEGORY_FILTERS.length === 0
+            ? true
+            : CATEGORY_FILTERS.some(filter => 项目类别 === filter);
 
         return {
             uniqueId,
@@ -339,7 +344,8 @@
             选课人数_容纳人数: 选课状态,
             授课教师: cleanText(row.querySelector(`td:nth-child(${15 + offset})`).textContent),
             isInvalid,
-            locationMatch
+            locationMatch,
+            categoryMatch
         };
     }
 
@@ -362,7 +368,8 @@
             }
 
             let allCourses = Array.from(courseRows).map(row => extractCourseInfo(row));
-            const validCourses = allCourses.filter(course => course.locationMatch && !course.isInvalid);
+            const validCourses = allCourses.filter(
+                course => course.locationMatch && course.categoryMatch && !course.isInvalid);
 
             console.log('%c[课程监控] 符合推送条件的课程', 'color:#2E86AB; font-weight:bold;');
             console.log(`共 ${validCourses.length} 门`, validCourses);
