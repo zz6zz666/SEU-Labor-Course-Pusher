@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      2.6
 // @license      MIT
-// @description  东南大学劳动教育选课神器！实时监控新增课程并微信推送，移动端后台稳定运行，当然你也可以选择在电脑上安装
+// @description  东南大学劳动教育选课神器！实时监控新增课程并Telegram推送，移动端后台稳定运行，当然你也可以选择在电脑上安装
 // @author       zz6zz666@github with AI support
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -11,7 +11,7 @@
 // @grant        GM_getValue
 // @grant        GM_openInTab
 // @run-at       document-end
-// @connect      www.pushplus.plus
+// @connect      api.telegram.org
 // @downloadURL  https://update.greasyfork.org/scripts/554904/SEU%E5%8A%B3%E5%8A%A8%E6%95%99%E8%82%B2%E8%AF%BE%E7%A8%8B%E6%8E%A8%E9%80%81%E5%8A%A9%E6%89%8B.user.js
 // @updateURL    https://update.greasyfork.org/scripts/554904/SEU%E5%8A%B3%E5%8A%A8%E6%95%99%E8%82%B2%E8%AF%BE%E7%A8%8B%E6%8E%A8%E9%80%81%E5%8A%A9%E6%89%8B.meta.js
 // ==/UserScript==
@@ -23,8 +23,9 @@
     // 【登录与推送配置】
     const USERNAME = '12345678';       // 替换为你的一卡通号
     const PASSWORD = 'abc123456';      // 替换为你的密码
-    const PUSHPLUS_TOKEN = 'ce0**********************************11'; // 替换为你的PushPlus Token
-    const PUSH_TITLE = '劳动教育课程推送'; // 微信推送标题
+    const TELEGRAM_BOT_TOKEN = '8253654589:AAF5h-ip78rBhnt4PTYDhIUQaCRkiC7ZLU4'; // Telegram Bot Token
+    const TELEGRAM_CHAT_ID = '';       // 替换为你的Telegram Chat ID（通过向 @seu_laborpusher_bot 发送消息获取）
+    const PUSH_TITLE = '劳动教育课程推送'; // Telegram推送标题
     const LOCATION_FILTERS = [];       // 校区筛选，如['四牌楼校区', '九龙湖校区']，为空则不筛选
     const CATEGORY_FILTERS = [];       // 劳动类别筛选，如['服务劳动']，为空则不筛选（完全匹配）
     const REFRESH_INTERVAL = 3 * 60 * 1000; // 选课页自动刷新间隔（单位：毫秒）
@@ -39,20 +40,27 @@
     // =================================================================
 
     // ==================== 工具函数 ====================
-    function pushToWechat(title, content) {
-        if (!PUSHPLUS_TOKEN) {
-            console.error('【错误】请填写PushPlus Token');
+    function pushToTelegram(title, content) {
+        if (!TELEGRAM_BOT_TOKEN) {
+            console.error('【错误】请填写Telegram Bot Token');
             return;
         }
+        if (!TELEGRAM_CHAT_ID) {
+            console.error('【错误】请填写Telegram Chat ID');
+            return;
+        }
+        
+        // 格式化消息为Telegram Markdown格式
+        const message = `*${title}*\n\n${content}`;
+        
         GM_xmlhttpRequest({
             method: "POST",
-            url: 'http://www.pushplus.plus/send',
+            url: `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
             headers: {'Content-Type': 'application/json'},
             data: JSON.stringify({
-                'token': PUSHPLUS_TOKEN,
-                'title': title,
-                'content': content,
-                'template': 'markdown'
+                'chat_id': TELEGRAM_CHAT_ID,
+                'text': message,
+                'parse_mode': 'Markdown'
             }),
             onload: function(response) {
                 console.log('%c【推送成功】', 'color:green; font-weight:bold;');
@@ -205,8 +213,8 @@
                 console.error('[自动登录] 登录超时，未检测到跳转或成功页');
                 GM_setValue('loginFailStatus', true);
                 GM_setValue('loginFailTime', Date.now());
-                pushToWechat('课程推送登录失效提醒',
-                             `## 统一身份认证登录超时\n\n⚠️ 登录尝试超过${LOGIN_TIMEOUT/1000}秒未跳转，可能是以下原因：\n1. 需要短信验证码\n2. 账号密码错误\n3. 系统临时故障\n\n请手动登录检查状态\n时间：${new Date().toLocaleString()}`);
+                pushToTelegram('课程推送登录失效提醒',
+                             `*统一身份认证登录超时*\n\n⚠️ 登录尝试超过${LOGIN_TIMEOUT/1000}秒未跳转，可能是以下原因：\n1\\. 需要短信验证码\n2\\. 账号密码错误\n3\\. 系统临时故障\n\n请手动登录检查状态\n时间：${new Date().toLocaleString()}`);
             }
         }, LOGIN_TIMEOUT);
 
@@ -391,14 +399,21 @@
             if (newCourses.length > 0) {
                 console.log(`%c[课程监控] 发现 ${newCourses.length} 门新课程，准备推送`, 'color:green;');
                 const formatToMarkdown = (courses) => {
-                    let md = '| 序号 | 项目名称 | 项目类别 | 实施时间 | 开课地点 | 选课情况 | 教师 |\n';
-                    md += '|------|----------|----------|----------|----------|----------|------|\n';
-                    courses.forEach(course => {
-                        md += `| ${course.序号} | ${course.项目名称} | ${course.项目类别} | ${course.实施时间} | ${course.开课地点} | ${course.选课人数_容纳人数} | ${course.授课教师} |\n`;
+                    let md = '';
+                    courses.forEach((course, index) => {
+                        if (index > 0) md += '\n\n';
+                        md += `*课程 ${index + 1}*\n`;
+                        md += `序号：${course.序号}\n`;
+                        md += `项目名称：${course.项目名称}\n`;
+                        md += `项目类别：${course.项目类别}\n`;
+                        md += `实施时间：${course.实施时间}\n`;
+                        md += `开课地点：${course.开课地点}\n`;
+                        md += `选课情况：${course.选课人数_容纳人数}\n`;
+                        md += `教师：${course.授课教师}`;
                     });
-                    return md + `\n提取时间：${new Date().toLocaleString()}`;
+                    return md + `\n\n_提取时间：${new Date().toLocaleString()}_`;
                 };
-                pushToWechat(PUSH_TITLE, formatToMarkdown(newCourses));
+                pushToTelegram(PUSH_TITLE, formatToMarkdown(newCourses));
                 newCourses.forEach(course => pushedUniqueIds.add(course.uniqueId));
                 GM_setValue('pushedCourseUniqueIds', Array.from(pushedUniqueIds));
             } else {
