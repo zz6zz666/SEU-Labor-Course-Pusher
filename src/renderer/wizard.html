@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
+    <title>设置向导</title>
+    <style>
+      :root {
+        --bg-0: #f3f7fd;
+        --bg-1: #e9f0fb;
+        --panel: #ffffff;
+        --ink: #152033;
+        --muted: #61708a;
+        --faint: #8b97ab;
+        --line: #e3e9f3;
+        --line-strong: #d3dcec;
+        --brand: #2f6feb;
+        --brand-2: #5b8def;
+        --brand-ink: #1b4bb3;
+        --brand-soft: #eaf1ff;
+        --brand-line: #cfe0ff;
+        --ok: #127a51;
+        --ok-soft: #e6f6ef;
+        --warn: #a86400;
+        --warn-soft: #fff4e2;
+        --bad: #c0392b;
+        --bad-soft: #fdecea;
+        --shadow: 0 12px 32px rgba(24, 46, 84, 0.08);
+        --radius: 14px;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; overflow: hidden; }
+      body {
+        margin: 0;
+        background: linear-gradient(180deg, var(--bg-0), var(--bg-1));
+        color: var(--ink);
+        font: 14px/1.6 "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .app { display: flex; height: 100vh; overflow: hidden; }
+
+      /* ---------------------------------------------------------- 侧栏 */
+      .side {
+        width: 256px;
+        flex: 0 0 256px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        padding: 22px 16px 16px;
+        background: linear-gradient(180deg, #ffffff, #f8fbff);
+        border-right: 1px solid var(--line);
+        overflow-y: auto;
+      }
+      .brand { display: flex; gap: 12px; align-items: center; padding: 0 6px; }
+      .brand .logo { flex: 0 0 auto; border-radius: 11px; box-shadow: 0 4px 12px rgba(47, 111, 235, 0.28); }
+      .brand-title { font-size: 14.5px; font-weight: 700; letter-spacing: .2px; }
+      .brand-sub { font-size: 12px; color: var(--muted); }
+      .stepper { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; }
+      .step {
+        display: flex;
+        gap: 11px;
+        align-items: flex-start;
+        padding: 10px 11px;
+        border-radius: 11px;
+        cursor: pointer;
+        transition: background .15s;
+      }
+      .step:hover { background: #f2f6fd; }
+      .step.active { background: var(--brand-soft); }
+      .step .idx {
+        flex: 0 0 auto;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        font-weight: 700;
+        background: #eef2f9;
+        color: var(--muted);
+        transition: background .18s, color .18s;
+      }
+      .step.active .idx { background: var(--brand); color: #fff; }
+      .step.done .idx { background: var(--ok-soft); color: var(--ok); }
+      .step .st-title { font-size: 13px; font-weight: 600; line-height: 1.35; }
+      .step.active .st-title { color: var(--brand-ink); }
+      .step .st-desc { font-size: 11.5px; color: var(--faint); line-height: 1.4; }
+      .side-foot { border-top: 1px dashed var(--line); padding-top: 12px; font-size: 11px; color: var(--faint); }
+      .side-foot code { font-family: Consolas, "Courier New", monospace; color: var(--muted); word-break: break-all; }
+
+      /* ---------------------------------------------------------- 主区 */
+      .main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+      .progress { height: 4px; background: #e6ecf6; flex: 0 0 auto; }
+      .progress .bar {
+        height: 100%;
+        width: 16.6667%;
+        background: linear-gradient(90deg, var(--brand), var(--brand-2));
+        transition: width .28s cubic-bezier(.4, 0, .2, 1);
+      }
+      .panels { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 30px 34px; }
+      .panel { display: none; }
+      .panel.active { display: block; animation: fade .28s ease; }
+      @keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+      h2 { margin: 0 0 6px; font-size: 19px; letter-spacing: .2px; }
+      .lead { margin: 0 0 18px; color: var(--muted); font-size: 13px; }
+
+      .feature { list-style: none; margin: 0 0 18px; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+      .feature li { display: flex; gap: 12px; align-items: flex-start; }
+      .fi {
+        flex: 0 0 auto;
+        width: 34px;
+        height: 34px;
+        border-radius: 10px;
+        background: var(--brand-soft);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .feature b { display: block; font-size: 13.5px; }
+      .feature .fd { color: var(--muted); font-size: 12.5px; }
+
+      .callout {
+        background: var(--brand-soft);
+        border: 1px solid var(--brand-line);
+        border-radius: 11px;
+        padding: 11px 14px;
+        font-size: 12.5px;
+        color: #24457d;
+      }
+      .callout code { background: #fff; border: 1px solid var(--brand-line); border-radius: 5px; padding: 0 5px; font-family: Consolas, monospace; }
+      .callout-path { margin-top: 7px; font-size: 11.5px; color: #4a6a9a; word-break: break-all; }
+      .link { color: var(--brand); cursor: pointer; text-decoration: none; border-bottom: 1px dashed var(--brand); }
+      .link:hover { color: var(--brand-ink); border-bottom-style: solid; }
+
+      .field { margin-bottom: 16px; }
+      .field > label { display: block; font-size: 12.5px; font-weight: 600; color: #33445f; margin-bottom: 6px; }
+      .row { display: flex; gap: 8px; }
+      .row input[type="text"], .row input[type="password"] { flex: 1 1 auto; width: auto; min-width: 0; }
+      .row button { flex: 0 0 auto; }
+      input[type="text"], input[type="password"] {
+        width: 100%;
+        font: inherit;
+        padding: 10px 12px;
+        color: var(--ink);
+        border: 1px solid var(--line-strong);
+        border-radius: 10px;
+        background: #fff;
+        outline: none;
+        transition: border-color .15s, box-shadow .15s;
+      }
+      input[type="text"]:focus, input[type="password"]:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(47, 111, 235, .14); }
+      input::placeholder { color: #a9b4c6; }
+      .hint { font-size: 11.5px; color: var(--faint); margin-top: 5px; }
+      .field-error { color: var(--bad); font-size: 12px; margin: -6px 0 12px; }
+
+      .switch-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 13px 15px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fff;
+        margin-bottom: 10px;
+        cursor: pointer;
+      }
+      .switch-row b { font-size: 13px; }
+      .switch-row .hint { margin-top: 2px; }
+      .switch { position: relative; flex: 0 0 auto; display: inline-flex; }
+      .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+      .switch .track { width: 42px; height: 24px; border-radius: 999px; background: #cfd8e6; position: relative; transition: background .18s; }
+      .switch .track::after {
+        content: "";
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 1px 3px rgba(20, 35, 60, .3);
+        transition: transform .18s;
+      }
+      .switch input:checked + .track { background: var(--brand); }
+      .switch input:checked + .track::after { transform: translateX(18px); }
+      .switch input:disabled + .track { opacity: .5; }
+
+      .chips { display: flex; flex-wrap: wrap; gap: 10px; }
+      .chip {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 15px;
+        border: 1px solid var(--line-strong);
+        border-radius: 999px;
+        background: #fff;
+        cursor: pointer;
+        user-select: none;
+        font-size: 13px;
+        transition: background .15s, border-color .15s, color .15s;
+      }
+      .chip:hover { border-color: #c3cede; background: #fbfcfe; }
+      .chip input { position: absolute; opacity: 0; width: 0; height: 0; }
+      .chip .dot {
+        position: relative;
+        flex: 0 0 auto;
+        width: 16px;
+        height: 16px;
+        border-radius: 5px;
+        border: 1.5px solid #c3cede;
+        transition: background .15s, border-color .15s;
+      }
+      .chip .dot::after {
+        content: "";
+        position: absolute;
+        left: 4.5px;
+        top: 1px;
+        width: 4px;
+        height: 8px;
+        border: solid #fff;
+        border-width: 0 2px 2px 0;
+        transform: rotate(45deg) scale(0);
+        transition: transform .12s;
+      }
+      .chip input:checked + .dot { background: var(--brand); border-color: var(--brand); }
+      .chip input:checked + .dot::after { transform: rotate(45deg) scale(1); }
+      .chip:has(input:checked) { background: var(--brand-soft); border-color: var(--brand-line); color: var(--brand-ink); }
+
+      button {
+        font: inherit;
+        font-size: 13px;
+        border-radius: 10px;
+        padding: 9px 16px;
+        cursor: pointer;
+        white-space: nowrap;
+        border: 1px solid var(--line-strong);
+        background: #fff;
+        color: var(--ink);
+        transition: background .15s, border-color .15s, box-shadow .15s, transform .05s;
+      }
+      button:hover { border-color: #c3cede; background: #fbfcfe; }
+      button:active { transform: translateY(1px); }
+      button.primary {
+        background: linear-gradient(180deg, var(--brand-2), var(--brand));
+        border-color: var(--brand);
+        color: #fff;
+        box-shadow: 0 4px 12px rgba(47, 111, 235, .28);
+      }
+      button.primary:hover { filter: brightness(1.03); }
+      button.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+      button.ghost:hover { background: #eef2f9; border-color: transparent; }
+      button:disabled { opacity: .45; cursor: not-allowed; }
+      .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+
+      .login-box { border: 1px solid var(--line); border-radius: var(--radius); background: #fff; padding: 16px 18px; box-shadow: var(--shadow); }
+      .login-status { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; font-size: 13px; }
+      .pill { display: inline-flex; align-items: center; padding: 2px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 600; }
+      .pill.ok { background: var(--ok-soft); color: var(--ok); }
+      .pill.warn { background: var(--warn-soft); color: var(--warn); }
+      .pill.bad { background: var(--bad-soft); color: var(--bad); }
+      .pill.idle { background: #eef1f6; color: var(--muted); }
+      .log { margin-top: 12px; font-size: 12.5px; color: var(--muted); min-height: 20px; }
+
+      .summary { border: 1px solid var(--line); border-radius: var(--radius); background: #fff; overflow: hidden; margin-bottom: 14px; }
+      .srow { display: flex; justify-content: space-between; gap: 14px; padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 13px; }
+      .srow:last-child { border-bottom: 0; }
+      .srow .k { color: var(--muted); }
+      .srow .v { font-weight: 600; text-align: right; }
+
+      .foot {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 24px;
+        border-top: 1px solid var(--line);
+        background: rgba(255, 255, 255, .78);
+      }
+      .foot-right { display: flex; align-items: center; gap: 10px; }
+      .foot .hint { font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="side">
+        <div class="brand">
+          <svg class="logo" width="40" height="40" viewBox="0 0 44 44" aria-hidden="true">
+            <rect x="0" y="0" width="44" height="44" rx="11" fill="#2f6feb" />
+            <rect x="9" y="13" width="21" height="4" rx="1.5" fill="#ffffff" />
+            <rect x="9" y="20" width="21" height="4" rx="1.5" fill="#ffffff" />
+            <rect x="9" y="27" width="14" height="4" rx="1.5" fill="#ffffff" />
+            <circle cx="33" cy="11" r="8" fill="#ffffff" />
+            <circle cx="33" cy="11" r="6" fill="#e5484d" />
+          </svg>
+          <div>
+            <div class="brand-title">劳动教育课程监控</div>
+            <div class="brand-sub">设置向导</div>
+          </div>
+        </div>
+        <ol class="stepper" id="stepper">
+          <li class="step" data-step="0"><span class="idx">1</span><div><div class="st-title">欢迎</div><div class="st-desc">它做什么，不做什么</div></div></li>
+          <li class="step" data-step="1"><span class="idx">2</span><div><div class="st-title">账号</div><div class="st-desc">一卡通号与密码</div></div></li>
+          <li class="step" data-step="2"><span class="idx">3</span><div><div class="st-title">筛选</div><div class="st-desc">地点与劳动类型</div></div></li>
+          <li class="step" data-step="3"><span class="idx">4</span><div><div class="st-title">通知</div><div class="st-desc">桌面通知 / 微信</div></div></li>
+          <li class="step" data-step="4"><span class="idx">5</span><div><div class="st-title">登录</div><div class="st-desc">完成一次认证</div></div></li>
+          <li class="step" data-step="5"><span class="idx">6</span><div><div class="st-title">完成</div><div class="st-desc">转入后台监控</div></div></li>
+        </ol>
+        <div class="side-foot">
+          <div>版本 <span id="app-version">-</span></div>
+          <div style="margin-top: 4px">开发者：<a class="link" id="link-author">zz6zz666</a></div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <div class="progress"><div class="bar" id="progress-bar"></div></div>
+        <div class="panels">
+          <section class="panel" data-panel="0">
+            <h2>欢迎使用</h2>
+            <p class="lead">这是一个常驻后台的小工具，替你盯着劳动教育选课页，发现新课程就立刻通知你。</p>
+            <ul class="feature">
+              <li>
+                <span class="fi">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 3a6 6 0 0 0-6 6v3l-1.5 3h15L18 12V9a6 6 0 0 0-6-6Z" stroke="#2f6feb" stroke-width="1.7" stroke-linejoin="round" />
+                    <path d="M9.5 18a2.5 2.5 0 0 0 5 0" stroke="#2f6feb" stroke-width="1.7" stroke-linecap="round" />
+                  </svg>
+                </span>
+                <div><b>后台静默监控</b><span class="fd">每隔几分钟拉取一次选课页，无需保持任何标签页打开。</span></div>
+              </li>
+              <li>
+                <span class="fi">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 3 4 6.5v5c0 4.6 3.2 8.1 8 9.5 4.8-1.4 8-4.9 8-9.5v-5L12 3Z" stroke="#2f6feb" stroke-width="1.7" stroke-linejoin="round" />
+                    <path d="m9 12 2 2 4-4" stroke="#2f6feb" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </span>
+                <div><b>双通道通知</b><span class="fd">Windows 桌面通知 + 微信（PushPlus，可选），发现新课立即推送。</span></div>
+              </li>
+              <li>
+                <span class="fi">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path d="M4 6h16M4 12h10M4 18h7" stroke="#2f6feb" stroke-width="1.7" stroke-linecap="round" />
+                  </svg>
+                </span>
+                <div><b>只管发现，不抢课</b><span class="fd">程序不会自动选课，选课始终由你在内置浏览器里自己完成。</span></div>
+              </li>
+            </ul>
+            <div class="callout">
+              凭据只保存在本机 <a class="link" id="link-config-welcome">config.json</a>，不会写入日志，也不会发送到任何服务器。
+              <div class="callout-path">完整路径：<code id="path-config-welcome">-</code></div>
+            </div>
+            <div class="actions" style="margin-top: 16px">
+              <button class="primary" id="btn-open-course">打开选课页面</button>
+              <span class="hint" style="align-self: center">可先看看当前有哪些课。</span>
+            </div>
+          </section>
+
+          <section class="panel" data-panel="1">
+            <h2>填写账号</h2>
+            <p class="lead">程序用它自动维持后台登录态。</p>
+            <div class="field">
+              <label for="in-username">一卡通号</label>
+              <input id="in-username" type="text" autocomplete="off" spellcheck="false" placeholder="例如 213230192" />
+            </div>
+            <div class="field">
+              <label for="in-password">密码</label>
+              <div class="row">
+                <input id="in-password" type="password" autocomplete="off" placeholder="统一身份认证密码" />
+                <button type="button" class="ghost" id="btn-toggle-pw">显示</button>
+              </div>
+            </div>
+            <div class="field-error" id="err-account" hidden></div>
+            <div class="callout">密码仅写入本机 <a class="link" id="link-config-account">config.json</a>，不会写入日志、不会外发。</div>
+          </section>
+
+          <section class="panel" data-panel="2">
+            <h2>筛选课程</h2>
+            <p class="lead">只对你在意的课程发出通知；不需要过滤就保持默认。</p>
+            <div class="field">
+              <label for="in-locations">开课地点关键字</label>
+              <input id="in-locations" type="text" autocomplete="off" spellcheck="false" placeholder="例如：无锡、九龙湖、四牌楼、丁家桥（留空则不筛地点）" />
+              <div class="hint">多个关键字用逗号或空格分隔；开课地点<strong>包含</strong>任一关键字即命中。</div>
+            </div>
+            <div class="field">
+              <label>劳动类型</label>
+              <div class="chips" id="chips-categories">
+                <label class="chip"><input type="checkbox" value="生活劳动" checked /><span class="dot"></span>生活劳动</label>
+                <label class="chip"><input type="checkbox" value="服务劳动" checked /><span class="dot"></span>服务劳动</label>
+                <label class="chip"><input type="checkbox" value="生产劳动" checked /><span class="dot"></span>生产劳动</label>
+              </div>
+              <div class="hint">勾选你想接收的类型；全部勾选或全部不勾选均表示不限制。</div>
+            </div>
+            <div class="field-error" id="err-filters" hidden></div>
+          </section>
+
+          <section class="panel" data-panel="3">
+            <h2>通知方式</h2>
+            <p class="lead">发现新课程时，用哪些渠道提醒你。</p>
+            <label class="switch-row">
+              <span><b>Windows 桌面通知</b><div class="hint">系统右下角弹窗，点击可直接打开选课页。</div></span>
+              <span class="switch"><input type="checkbox" id="sw-windows" checked /><span class="track"></span></span>
+            </label>
+            <label class="switch-row">
+              <span><b>微信推送（PushPlus）</b><div class="hint">需要先申请一个 Token，留空则不启用。</div></span>
+              <span class="switch"><input type="checkbox" id="sw-pushplus" /><span class="track"></span></span>
+            </label>
+            <div class="field" style="margin-top: 12px">
+              <label for="in-token">PushPlus Token</label>
+              <input id="in-token" type="text" autocomplete="off" spellcheck="false" placeholder="可选，留空即只用桌面通知" />
+              <div class="hint">申请地址：<a class="link" id="link-pushplus">www.pushplus.plus</a>　微信扫码登录后，注册并复制 <b>用户Token</b>。<br />（可能需要向 PushPlus 平台支付 1 元以激活微信推送功能）</div>
+            </div>
+          </section>
+
+          <section class="panel" data-panel="4">
+            <h2>完成一次登录</h2>
+            <p class="lead">学校统一身份认证在首次登录（或换网络出口）时可能需要短信验证码，这一步需要你手动完成一次。</p>
+            <div class="login-box">
+              <div class="login-status">
+                <span style="color: var(--muted)">登录态</span>
+                <span class="pill idle" id="pill-login">尚未确认</span>
+              </div>
+              <div class="actions">
+                <button class="primary" id="btn-open-login">打开登录窗口</button>
+                <button id="btn-verify">我已登录，检查登录态</button>
+              </div>
+              <div class="hint">登录窗口里账号密码会自动预填；登录态保存在本程序自己的会话仓库，之后长期免打扰。</div>
+            </div>
+            <div class="log" id="log"></div>
+          </section>
+
+          <section class="panel" data-panel="5">
+            <h2>准备就绪</h2>
+            <p class="lead">确认下面的信息；检测到登录后会自动转入后台监控，直接关闭窗口即可。</p>
+            <div class="summary" id="summary"></div>
+            <label class="switch-row">
+              <span><b>开机自启</b><div class="hint">电脑重启后自动恢复监控，无需手动启动；随时可在托盘菜单里关掉。</div></span>
+              <span class="switch"><input type="checkbox" id="sw-autostart" checked /><span class="track"></span></span>
+            </label>
+            <label class="switch-row">
+              <span><b>自动选课</b><div class="hint">发现符合筛选条件的课程时自动提交选课（默认关闭）。开启后可能同时选上多门，选课未上课会影响后续选课，请谨慎开启。</div></span>
+              <span class="switch"><input type="checkbox" id="sw-autoselect" /><span class="track"></span></span>
+            </label>
+            <div class="actions" style="margin-top: 14px">
+              <button id="btn-open-config">打开配置文件</button>
+              <button id="btn-open-logs">打开日志目录</button>
+            </div>
+          </section>
+        </div>
+
+        <footer class="foot">
+          <button class="ghost" id="btn-prev">上一步</button>
+          <div class="foot-right">
+            <span class="hint" id="foot-hint"></span>
+            <button class="primary" id="btn-next">下一步</button>
+            <button id="btn-close" hidden>关闭窗口</button>
+          </div>
+        </footer>
+      </main>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const STEP_COUNT = 6;
+      const LABOR_TYPES = ['生活劳动', '服务劳动', '生产劳动'];
+      const state = { step: 0, maxStep: 0, status: null, config: null, token: '', verifying: false };
+
+      function setPill(el, text, cls) {
+        el.textContent = text;
+        el.className = 'pill ' + cls;
+      }
+
+      function setLog(text) {
+        $('log').textContent = text;
+      }
+
+      /** 把 Token 中间部分替换为 *，仅保留头尾少量字符用于辨认 */
+      function maskToken(t) {
+        if (!t) return '';
+        if (t.length <= 8) return '*'.repeat(t.length);
+        return t.slice(0, 4) + '*'.repeat(t.length - 8) + t.slice(-4);
+      }
+
+      /** 让「开机自启 / 自动选课」开关跟随实际生效状态(含托盘改动),轮询时也会同步 */
+      function syncBehaviorToggles() {
+        const s = state.status;
+        if (!s) return;
+        $('sw-autostart').checked = Boolean(s.autoStartEnabled);
+        $('sw-autoselect').checked = Boolean(s.autoSelectEnabled);
+      }
+
+      function stepDone(i) {
+        const s = state.status;
+        if (!s) return false;
+        switch (i) {
+          case 0: return s.firstRunCompleted || state.maxStep > 0;
+          case 1: return s.credentialsConfigured;
+          case 2: return s.filtersConfigured || state.maxStep > 2;
+          case 3: return s.pushplusConfigured || state.maxStep > 3;
+          case 4: return s.authState === 'valid';
+          case 5: return s.firstRunCompleted;
+          default: return false;
+        }
+      }
+
+      function renderStepper() {
+        document.querySelectorAll('.step').forEach((el) => {
+          const i = Number(el.dataset.step);
+          el.classList.toggle('active', i === state.step);
+          el.classList.toggle('done', i !== state.step && stepDone(i));
+        });
+      }
+
+      function renderFooter() {
+        const last = state.step === STEP_COUNT - 1;
+        $('btn-prev').disabled = state.step === 0;
+        $('btn-next').hidden = last;
+        $('btn-close').hidden = !last;
+        const hints = ['先了解它能做什么', '账号只保存在本机', '可留空表示不过滤', '可以稍后再配置', '完成后点下一步', '关闭窗口即完成'];
+        $('foot-hint').textContent = hints[state.step];
+      }
+
+      function go(step) {
+        state.step = Math.max(0, Math.min(STEP_COUNT - 1, step));
+        state.maxStep = Math.max(state.maxStep, state.step);
+        document.querySelectorAll('.panel').forEach((p) => {
+          p.classList.toggle('active', Number(p.dataset.panel) === state.step);
+        });
+        $('progress-bar').style.width = ((state.step + 1) / STEP_COUNT) * 100 + '%';
+        renderStepper();
+        renderFooter();
+        if (state.step === 1) $('in-username').focus();
+        if (state.step === 4) refreshLoginPill();
+        if (state.step === 5) renderSummary();
+      }
+
+      function refreshLoginPill() {
+        const s = state.status;
+        if (!s) return;
+        const el = $('pill-login');
+        if (state.verifying) {
+          setPill(el, '检测中', 'idle');
+          return;
+        }
+        if (s.authState === 'valid') setPill(el, '已登录', 'ok');
+        else if (s.authState === 'expired') setPill(el, '已失效', 'bad');
+        else setPill(el, '尚未确认', 'idle');
+      }
+
+      function applyVerifyResult(result) {
+        if (result.state === 'valid') {
+          setPill($('pill-login'), '已登录', 'ok');
+          setLog('登录态有效：' + result.reason);
+        } else if (result.state === 'expired') {
+          setPill($('pill-login'), '已失效', 'bad');
+          setLog('仍未登录：' + result.reason + '　请点击「打开登录窗口」完成登录。');
+        } else {
+          setPill($('pill-login'), '无法判定', 'warn');
+          setLog('无法判定：' + result.reason + '　请稍后重试或检查网络。');
+        }
+      }
+
+      /** 自动探测登录态:进入向导即判定,不再要求用户手动打开登录窗口触发 */
+      async function autoVerify() {
+        state.verifying = true;
+        setPill($('pill-login'), '检测中', 'idle');
+        setLog('正在自动检测登录态…');
+        try {
+          const result = await window.seuWizard.verify();
+          state.verifying = false;
+          applyVerifyResult(result);
+        } catch (err) {
+          state.verifying = false;
+          setLog('自动检测失败：' + err.message);
+        }
+        await loadStatus();
+      }
+
+      /** 从 config 反推「想接收的类别」:黑名单之外的都算想要 —— 用于回填/展示 */
+      function chosenCategories() {
+        const blacklist = (state.config && state.config.categories) || [];
+        return LABOR_TYPES.filter((t) => blacklist.indexOf(t) < 0);
+      }
+
+      function filtersText() {
+        const cfg = state.config || {};
+        const locs = cfg.locations || [];
+        const chosen = chosenCategories();
+        const parts = [];
+        if (locs.length) parts.push('地点 ' + locs.join('/'));
+        if (chosen.length && chosen.length < LABOR_TYPES.length) parts.push('类型 ' + chosen.join('/'));
+        return parts.length ? parts.join('；') : '不限';
+      }
+
+      function renderSummary() {
+        const s = state.status || {};
+        const cfg = state.config || {};
+        const filtered = (cfg.locations || []).length > 0 || (cfg.categories || []).length > 0;
+        const rows = [
+          ['账号', s.credentialsConfigured ? '已填写' : '未填写', s.credentialsConfigured ? 'ok' : 'warn'],
+          ['筛选', filtersText(), filtered ? 'ok' : 'idle'],
+          ['桌面通知', s.windowsNotifyEnabled ? '已开启' : '已关闭', s.windowsNotifyEnabled ? 'ok' : 'idle'],
+          ['微信推送', s.pushplusConfigured ? '已配置' : '未配置', s.pushplusConfigured ? 'ok' : 'idle'],
+          ['登录态', s.authState === 'valid' ? '有效' : s.authState === 'expired' ? '已失效' : '尚未确认', s.authState === 'valid' ? 'ok' : 'warn'],
+        ];
+        $('summary').innerHTML = rows
+          .map((r) => '<div class="srow"><span class="k">' + r[0] + '</span><span class="v"><span class="pill ' + r[2] + '">' + r[1] + '</span></span></div>')
+          .join('');
+      }
+
+      function syncPushplusSwitch() {
+        const hasToken = state.token.trim().length > 0;
+        const sw = $('sw-pushplus');
+        const wasDisabled = sw.disabled;
+        sw.disabled = !hasToken;
+        if (!hasToken) sw.checked = false;
+        else if (wasDisabled) sw.checked = true;
+      }
+
+      async function loadStatus() {
+        try {
+          state.status = await window.seuWizard.getStatus();
+          $('path-config-welcome').textContent = state.status.configPath || '-';
+          $('app-version').textContent = state.status.version || '-';
+          refreshLoginPill();
+          syncBehaviorToggles();
+          renderStepper();
+        } catch (err) {
+          setLog('读取状态失败：' + err.message);
+        }
+      }
+
+      async function loadConfig() {
+        try {
+          state.config = await window.seuWizard.getConfig();
+          $('in-username').value = state.config.username || '';
+          $('in-password').value = state.config.password || '';
+          state.token = state.config.pushplusToken || '';
+          $('in-token').value = maskToken(state.token);
+          $('in-locations').value = (state.config.locations || []).join('，');
+          const blacklist = state.config.categories || [];
+          document.querySelectorAll('#chips-categories input').forEach((el) => {
+            el.checked = blacklist.indexOf(el.value) < 0;
+          });
+          $('sw-windows').checked = Boolean(state.config.windowsNotifyEnabled);
+          $('sw-pushplus').checked = Boolean(state.config.pushplusEnabled);
+          // 勾选状态一律反映「实际生效」:自启看系统、自动选课看 config,避免显示与真实不符
+          $('sw-autostart').checked = Boolean(state.status && state.status.autoStartEnabled);
+          $('sw-autoselect').checked = Boolean(state.config.autoSelect);
+          syncPushplusSwitch();
+        } catch (err) {
+          setLog('读取配置失败：' + err.message);
+        }
+      }
+
+      async function next() {
+        if (state.step === 1) {
+          const username = $('in-username').value.trim();
+          const password = $('in-password').value;
+          const err = $('err-account');
+          if (!username || !password) {
+            err.textContent = '请先填写一卡通号与密码。';
+            err.hidden = false;
+            return;
+          }
+          const res = await window.seuWizard.saveAccount({ username, password });
+          if (!res.ok) {
+            err.textContent = '保存失败：' + (res.error || '未知错误');
+            err.hidden = false;
+            return;
+          }
+          err.hidden = true;
+          await loadStatus();
+        } else if (state.step === 2) {
+          const locations = $('in-locations').value
+            .split(/[,，、;；\s]+/)
+            .map((s) => s.trim())
+            .filter(Boolean);
+          const chosen = LABOR_TYPES.filter((t) => {
+            const el = document.querySelector('#chips-categories input[value="' + t + '"]');
+            return el && el.checked;
+          });
+          // UI 是白名单多选:未勾选的类型才写入 config 的黑名单
+          const allChosen = chosen.length === LABOR_TYPES.length || chosen.length === 0;
+          const categories = allChosen ? [] : LABOR_TYPES.filter((t) => chosen.indexOf(t) < 0);
+          const err = $('err-filters');
+          const res = await window.seuWizard.saveFilters({ locations, categories });
+          if (!res.ok) {
+            err.textContent = '保存失败：' + (res.error || '未知错误');
+            err.hidden = false;
+            return;
+          }
+          err.hidden = true;
+          await loadConfig();
+          await loadStatus();
+        } else if (state.step === 3) {
+          const pushplusToken = state.token.trim();
+          const pushplusEnabled = $('sw-pushplus').checked && pushplusToken.length > 0;
+          const windowsNotifyEnabled = $('sw-windows').checked;
+          const res = await window.seuWizard.saveNotify({ pushplusToken, pushplusEnabled, windowsNotifyEnabled });
+          if (!res.ok) {
+            setLog('保存失败：' + (res.error || '未知错误'));
+            return;
+          }
+          await loadStatus();
+        }
+        go(state.step + 1);
+      }
+
+      $('btn-next').addEventListener('click', () => void next());
+      $('btn-prev').addEventListener('click', () => go(state.step - 1));
+
+      $('btn-close').addEventListener('click', () => window.seuWizard.close());
+
+      $('btn-toggle-pw').addEventListener('click', () => {
+        const input = $('in-password');
+        const showing = input.type === 'text';
+        input.type = showing ? 'password' : 'text';
+        $('btn-toggle-pw').textContent = showing ? '显示' : '隐藏';
+      });
+
+      // Token:聚焦时显示原文供编辑,失焦后把中间部分以 * 隐藏,保护隐私
+      $('in-token').addEventListener('input', () => {
+        state.token = $('in-token').value.trim();
+        syncPushplusSwitch();
+      });
+      $('in-token').addEventListener('focus', () => {
+        $('in-token').value = state.token;
+      });
+      $('in-token').addEventListener('blur', () => {
+        $('in-token').value = maskToken(state.token);
+      });
+
+      // 开机自启 / 自动选课:改动即写回,不再有「完成」确认动作
+      $('sw-autostart').addEventListener('change', () => {
+        void window.seuWizard.setBehavior({ autoStart: $('sw-autostart').checked });
+      });
+      $('sw-autoselect').addEventListener('change', () => {
+        void window.seuWizard.setBehavior({ autoSelect: $('sw-autoselect').checked });
+      });
+
+      $('btn-open-login').addEventListener('click', async () => {
+        setLog('正在打开登录窗口…账号密码会自动预填。');
+        await window.seuWizard.openLogin();
+      });
+
+      $('btn-verify').addEventListener('click', async () => {
+        $('btn-verify').disabled = true;
+        state.verifying = true;
+        setPill($('pill-login'), '检测中', 'idle');
+        setLog('正在请求选课页以确认登录态…');
+        try {
+          const result = await window.seuWizard.verify();
+          state.verifying = false;
+          applyVerifyResult(result);
+          await loadStatus();
+        } catch (err) {
+          state.verifying = false;
+          setLog('检查失败：' + err.message);
+        } finally {
+          $('btn-verify').disabled = false;
+        }
+      });
+
+      $('btn-open-config').addEventListener('click', () => window.seuWizard.openConfig());
+      $('btn-open-logs').addEventListener('click', () => window.seuWizard.openLogs());
+      $('btn-open-course').addEventListener('click', () => window.seuWizard.openCourse());
+      $('link-config-welcome').addEventListener('click', () => window.seuWizard.openConfig());
+      $('link-config-account').addEventListener('click', () => window.seuWizard.openConfig());
+      $('link-pushplus').addEventListener('click', () => window.seuWizard.openExternal('http://www.pushplus.plus'));
+      $('link-author').addEventListener('click', () => window.seuWizard.openExternal('https://github.com/zz6zz666'));
+
+      document.querySelectorAll('.step').forEach((el) => {
+        el.addEventListener('click', () => {
+          const i = Number(el.dataset.step);
+          if (i <= state.maxStep) go(i);
+        });
+      });
+
+      document.querySelectorAll('#in-username, #in-password, #in-locations').forEach((el) => {
+        el.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            void next();
+          }
+        });
+      });
+
+      // 状态轮询:让登录态、监控状态自动跟随后台变化,无需用户手动操作
+      setInterval(() => { void loadStatus(); }, 2000);
+
+      (async function boot() {
+        await loadStatus();
+        await loadConfig();
+        const s = state.status;
+        let start = 0;
+        if (s && s.firstRunCompleted) {
+          if (!s.credentialsConfigured) start = 1;
+          else if (s.authState !== 'valid') start = 4;
+          else start = 5;
+        }
+        state.maxStep = start;
+        go(start);
+        // 已配置账号但登录态未确认/已失效时,自动探测一次,不再要求用户手动打开登录窗口
+        if (s && s.credentialsConfigured && s.authState !== 'valid') {
+          void autoVerify();
+        }
+      })();
+    </script>
+  </body>
+</html>

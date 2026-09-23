@@ -1,0 +1,13 @@
+node_modules/
+dist/
+release/
+data/
+config.json
+*.log
+npm-debug.log*
+
+# Electron 运行时的手动备份目录（tools/fetch-electron.js 与修复流程可能产生）
+.electron-dist-keep/
+.electron-path-keep
+.fstest/
+.repair-*/

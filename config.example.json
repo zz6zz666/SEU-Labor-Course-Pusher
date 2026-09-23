@@ -1,0 +1,38 @@
+{
+  "credentials": {
+    "username": "",
+    "password": ""
+  },
+  "filters": {
+    "locations": [],
+    "categories": []
+  },
+  "schedule": {
+    "refreshIntervalMs": 180000,
+    "jitterRatio": 0.1,
+    "dailySummaryHour": 21,
+    "failureAlertThreshold": 3,
+    "maxBackoffMs": 1800000
+  },
+  "push": {
+    "pushplus": {
+      "enabled": true,
+      "token": "",
+      "title": "劳动教育课程推送"
+    },
+    "windows": {
+      "enabled": true,
+      "openBrowserOnClick": true
+    }
+  },
+  "behavior": {
+    "autoLogin": true,
+    "autoOpenOnAuthFailure": true,
+    "autoLaunchAtLogin": false,
+    "autoSelect": false
+  },
+  "logging": {
+    "level": "info",
+    "retentionDays": 7
+  }
+}
