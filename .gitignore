@@ -1,13 +1,25 @@
-node_modules/
-dist/
-release/
-data/
-config.json
-*.log
-npm-debug.log*
+# build output
+/bin/
+/dist/
+/release/
 
-# Electron 运行时的手动备份目录（tools/fetch-electron.js 与修复流程可能产生）
-.electron-dist-keep/
-.electron-path-keep
-.fstest/
-.repair-*/
+# local runtime data (dev mode, SEU_DAEMON_DATA_DIR=./data)
+/data/
+/config.json
+/cookies.json
+/state.json
+
+# logs / snapshots
+*.log
+/snapshots/
+
+# browser profile smoke test artifacts
+/.login-smoke/
+
+# binaries
+*.exe
+*.test
+
+# editor
+.idea/
+.vscode/
