@@ -11,14 +11,13 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"syscall"
 	"time"
 
-	"github.com/zz6zz666/SEU-Labor-Course-Pusher/internal/appwindow"
 	"github.com/zz6zz666/SEU-Labor-Course-Pusher/internal/autostart"
 	"github.com/zz6zz666/SEU-Labor-Course-Pusher/internal/browser"
 	"github.com/zz6zz666/SEU-Labor-Course-Pusher/internal/config"
@@ -49,11 +48,22 @@ func main() {
 		doLogin = flag.Bool("login", false, "打开登录窗口,完成后保存登录态并退出")
 		showWiz = flag.Bool("wizard", false, "启动后直接打开设置向导(安装器使用)")
 		showVer = flag.Bool("version", false, "打印版本后退出")
+
+		wizUI   = flag.Bool("wizard-ui", false, "内部使用:仅运行设置向导窗口(短进程)")
+		wizURL  = flag.String("wiz-url", "", "内部使用:设置向导地址")
+		wizData = flag.String("wiz-data", "", "内部使用:设置向导 WebView2 数据目录")
 	)
 	flag.Parse()
 
 	if *showVer {
 		fmt.Println(version)
+		return
+	}
+	if *wizUI {
+		if err := runWizardUI(*wizURL, *wizData); err != nil {
+			fmt.Fprintln(os.Stderr, "错误:", err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -188,19 +198,31 @@ func run(ctx context.Context, once, doLogin, showWizard bool) error {
 
 	var tray *ui.Tray
 	var wizardSrv *wizard.Server
-	var wizardWin *appwindow.Window
+	var wizardProc *exec.Cmd
 	var wizardMu sync.Mutex
 
-	// killWizard closes the settings window (if any) and its API server.
-	// The caller must hold wizardMu.
+	// killWizard tears down the settings API server and the short-lived window
+	// process that renders it. The caller must hold wizardMu.
 	killWizard := func() {
-		win, srv := wizardWin, wizardSrv
-		wizardWin, wizardSrv = nil, nil
-		if win != nil {
-			win.Close()
+		proc, srv := wizardProc, wizardSrv
+		wizardProc, wizardSrv = nil, nil
+		if proc != nil && proc.Process != nil {
+			_ = proc.Process.Kill()
 		}
 		if srv != nil {
+			srv.SetOnClose(nil)
 			_ = srv.Close()
+		}
+	}
+	// killWizardProc stops only the window process. It takes the lock itself so
+	// it is safe to call from the server's close callback (any goroutine).
+	killWizardProc := func() {
+		wizardMu.Lock()
+		proc := wizardProc
+		wizardProc = nil
+		wizardMu.Unlock()
+		if proc != nil && proc.Process != nil {
+			_ = proc.Process.Kill()
 		}
 	}
 
@@ -234,70 +256,49 @@ func run(ctx context.Context, once, doLogin, showWizard bool) error {
 			log.Warn("启动设置向导失败:", err)
 			return
 		}
-		url := srv.URL()
+		wizardSrv = srv
 
-		// The wizard was designed for a 980x720 logical window; scale the window
-		// to the display DPI. WebView2 scales the page content itself.
-		scale := osutil.DPIScale()
-		if scale < 1 {
-			scale = 1
-		}
-		px := func(v int) int { return int(float64(v) * scale) }
-		log.Info("设置向导显示缩放:", scale)
-
-		type result struct {
-			win *appwindow.Window
-			err error
-		}
-		ready := make(chan result, 1)
-		go func() {
-			runtime.LockOSThread()
-			defer runtime.UnlockOSThread()
-			win, err := appwindow.Open(url, appwindow.Options{
-				Title:     "设置向导 · SEU 劳动教育课程推送助手",
-				Width:     px(980),
-				Height:    px(720),
-				MinWidth:  px(860),
-				MinHeight: px(640),
-				IconID:    32512,
-				DataPath:  filepath.Join(p.DataDir, "wizard-webview"),
-			})
-			ready <- result{win, err}
-			if err != nil {
-				return
-			}
-			win.Run()
-		}()
-
-		res := <-ready
-		if res.err != nil {
-			log.Warn("打开设置向导窗口失败:", res.err, "·改用默认浏览器")
-			_ = osutil.OpenURL(url)
-			wizardSrv = srv
+		// The WebView2 window runs in a separate, short-lived process (this same
+		// executable with -wizard-ui) so the resident daemon never loads the
+		// WebView2 runtime: closing the window exits the child and reclaims all
+		// of its memory. Every wizard action still runs here, behind the
+		// loopback API the window talks to.
+		exe, err := os.Executable()
+		if err != nil {
+			log.Warn("定位程序路径失败,改用默认浏览器:", err)
+			_ = osutil.OpenURL(srv.URL())
 			return
 		}
-		win := res.win
-		wizardSrv, wizardWin = srv, win
+		proc := exec.Command(exe,
+			"-wizard-ui",
+			"-wiz-url", srv.URL(),
+			"-wiz-data", filepath.Join(p.DataDir, "wizard-webview"),
+		)
+		if err := proc.Start(); err != nil {
+			log.Warn("打开设置向导窗口失败,改用默认浏览器:", err)
+			_ = osutil.OpenURL(srv.URL())
+			return
+		}
+		wizardProc = proc
 
-		// The page's「关闭窗口」button closes the API server; mirror that onto
-		// the native window. Guarded so it never re-enters the wizard mutex.
-		srv.SetOnClose(func() { win.Close() })
+		// The page's「关闭窗口」button closes the API server; also stop the child.
+		srv.SetOnClose(killWizardProc)
 
-		// Closing the window tears the API server down.
-		go func(win *appwindow.Window, srv *wizard.Server) {
-			<-win.Done()
+		// The child exiting tears the API server down.
+		go func(proc *exec.Cmd, srv *wizard.Server) {
+			_ = proc.Wait()
 			wizardMu.Lock()
-			if wizardWin == win {
-				wizardWin = nil
+			if wizardProc == proc {
+				wizardProc = nil
 			}
 			if wizardSrv == srv {
 				wizardSrv = nil
 			}
 			wizardMu.Unlock()
 			_ = srv.Close()
-		}(win, srv)
+		}(proc, srv)
 
-		log.Info("设置向导已启动")
+		log.Info("设置向导已启动(独立窗口进程)")
 	}
 
 	actions := ui.Actions{
