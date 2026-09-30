@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -12,25 +16,33 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
+      # The reusable crates live in a sibling repository that this app depends on
+      # by relative path (`../rust-webui-kit`). Check both out as siblings inside
+      # the workspace and build from `app/`, so the relative path resolves without
+      # leaving $GITHUB_WORKSPACE (checkout refuses paths outside it).
       - uses: actions/checkout@v4
+        with:
+          path: app
 
-      # The reusable Windows/web-UI crates live in a sibling repository that this
-      # one depends on by relative path, so fetch it next to this checkout.
-      # Requires that repository to be reachable (push it before relying on CI).
       - uses: actions/checkout@v4
         with:
           repository: zz6zz666/rust-webui-kit
-          path: ../rust-webui-kit
+          path: rust-webui-kit
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app
 
       - name: Check (must be warning-free)
+        working-directory: app
         run: cargo check --all-targets --message-format short
 
       - name: Test
+        working-directory: app
         run: cargo test
 
       - name: Build
+        working-directory: app
         run: cargo build --release

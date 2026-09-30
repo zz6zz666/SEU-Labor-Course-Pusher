@@ -14,8 +14,11 @@ shell.
 If the sibling checkout is missing, clone it next to this repo:
 
 ```powershell
-git clone <rust-webui-kit-url> ..\rust-webui-kit
+git clone https://github.com/zz6zz666/rust-webui-kit ..\rust-webui-kit
 ```
+
+CI checks this repo and the kit out as siblings inside the runner workspace and
+builds from the `app/` directory, so the same relative path resolves there.
 
 ## Commands
 

@@ -13,6 +13,11 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
+    // This resource is compiled with the GNU `windres`; the MSVC toolchain would
+    // need `rc.exe` instead, so skip it there (CI builds with MSVC).
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("gnu") {
+        return;
+    }
 
     let version =
         std::env::var("SEU_LABOR_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());

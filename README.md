@@ -48,6 +48,11 @@ Chromium 的顺序探测，也可在 `config.json` 的 `browser.path` 中手动�
 ## 🛠 构建
 
 需要 Rust（rustup，`x86_64-pc-windows-gnu` 工具链）；打包安装包另需 Inno Setup 6。
+依赖的可复用项目 **`rust-webui-kit`** 走相对路径，需与本仓库同级检出：
+
+```powershell
+git clone https://github.com/zz6zz666/rust-webui-kit ..\rust-webui-kit
+```
 
 ```powershell
 .\build.ps1 -Version 1.2.0      # 主程序: release\seu-labor.exe
