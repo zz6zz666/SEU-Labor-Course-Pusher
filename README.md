@@ -16,7 +16,7 @@
 
 ## 📦 安装
 
-下载 `seu-labor-setup-1.1.1.exe`，双击安装：
+下载 `seu-labor-setup-1.2.0.exe`，双击安装：
 
 - 免管理员，按当前用户安装
 - 自动创建开始菜单快捷方式（桌面快捷方式可选）
@@ -50,8 +50,8 @@ Chromium 的顺序探测，也可在 `config.json` 的 `browser.path` 中手动�
 需要 Rust（rustup，`x86_64-pc-windows-gnu` 工具链）；打包安装包另需 Inno Setup 6。
 
 ```powershell
-.\build.ps1 -Version 1.1.1      # 主程序: release\seu-labor.exe
-.\package.ps1                   # 安装包: release\seu-labor-setup-1.1.1.exe
+.\build.ps1 -Version 1.2.0      # 主程序: release\seu-labor.exe
+.\package.ps1                   # 安装包: release\seu-labor-setup-1.2.0.exe
 ```
 
 > `WebView2Loader.dll`（随 `vendor\` 提供）会与主程序一起分发，供系统 WebView2 使用。
@@ -67,6 +67,17 @@ Chromium 的顺序探测，也可在 `config.json` 的 `browser.path` 中手动�
 - **设置界面**：由系统自带的 WebView2 渲染，轻快且无额外依赖。
 
 所有重资源都取自系统，程序本体只是一个很小的可执行文件；账号与设置仅保存在本机。
+
+代码以 Cargo workspace 组织：一个可执行文件 + 若干可复用库（`crates/`）。库只提供通用机制，
+学校相关流程与页面留在主程序里：
+
+- `winkit`：通用 Win32 小工具（DPI 缩放、从 `.ico` 生成图标并设为窗口图标）。
+- `traykit`：托盘图标 + 自绘 Fluent 风格弹窗菜单；菜单内容由宿主以数据提供。
+- `browserhost`：定位、启动并驱动系统 Chromium（CDP），管理独立配置目录与 Cookie 注入。
+- `webmsg`：本地回环 HTTP 桥，把宿主 API 暴露给被托管的网页（请求 / 响应 / 事件信封）。
+- `websurface`：多窗口 Web UI 宿主，WebView2 引擎 + 借用 Chromium 兜底。
+
+依赖方向：`seu-labor` → `websurface` → { `webmsg`、`browserhost`、`winkit` }；`traykit` → `winkit`。
 
 ## 📄 许可
 

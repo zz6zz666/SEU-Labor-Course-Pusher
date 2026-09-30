@@ -58,14 +58,7 @@ impl ChildProc {
 }
 
 pub fn spawn(exe: &Path, args: &[String]) -> std::io::Result<ChildProc> {
-    let mut cmd = std::process::Command::new(exe);
-    cmd.args(args);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
-    let child = cmd.spawn()?;
+    let child = crate::osutil::command(exe).args(args).spawn()?;
     let pid = child.id();
     drop(child);
     // `OpenProcess` wants PROCESS_ACCESS_RIGHTS; SYNCHRONIZE is a shared

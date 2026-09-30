@@ -16,7 +16,8 @@ use rsa::pkcs8::DecodePublicKey;
 use rsa::rand_core::OsRng;
 use rsa::{Pkcs1v15Encrypt, RsaPublicKey};
 
-use crate::browser::{self, Browser};
+use browserhost::{Session, WindowMode};
+
 use crate::logging::Logger;
 use crate::session;
 use crate::session::jar::{Jar, StoredCookie};
@@ -265,13 +266,14 @@ pub fn run(opts: &LoginOptions<'_>) -> Result<Vec<StoredCookie>> {
         opts.poll_interval
     };
 
-    let mut b = browser::cdp::Chrome::launch(
-        true,
-        opts.profile_dir,
-        Some(opts.url),
-        browser::cdp::WindowMode::App,
-        opts.exec_path,
-    )?;
+    let mut b = Session::launch(browserhost::SessionConfig {
+        visible: true,
+        profile_dir: opts.profile_dir.to_string(),
+        url: Some(opts.url.to_string()),
+        mode: WindowMode::App,
+        exec_path: opts.exec_path.map(str::to_string),
+        profile_name: crate::brand::TITLE.to_string(),
+    })?;
 
     opts.log
         .info("已打开登录窗口,请在窗口内完成登录(可能需要验证码/短信)");
@@ -288,26 +290,26 @@ pub fn run(opts: &LoginOptions<'_>) -> Result<Vec<StoredCookie>> {
         if !filled {
             filled = try_fill_credentials(&mut b, opts);
         }
-        let Ok(cookies) = b.all_cookies() else {
+        let Ok(cookies) = b.cookies() else {
             continue;
         };
         if authenticated(&cookies) {
             opts.log
                 .info(format!("检测到登录成功,已获取 {} 个 Cookie", cookies.len()));
             b.close();
-            return Ok(cookies);
+            return Ok(cookies.into_iter().map(StoredCookie::from).collect());
         }
     }
 }
 
-fn try_fill_credentials(b: &mut dyn Browser, opts: &LoginOptions<'_>) -> bool {
-    let Ok(probe) = b.eval(&browser::scripts::ready_script()) else {
+fn try_fill_credentials(b: &mut Session, opts: &LoginOptions<'_>) -> bool {
+    let Ok(probe) = b.eval(&crate::login_scripts::ready_script()) else {
         return false;
     };
     if !probe.get("ready").and_then(|v| v.as_bool()).unwrap_or(false) {
         return false;
     }
-    let Ok(filled) = b.eval(&browser::scripts::fill_credentials_script(
+    let Ok(filled) = b.eval(&crate::login_scripts::fill_credentials_script(
         opts.username,
         opts.password,
     )) else {
@@ -322,9 +324,10 @@ fn try_fill_credentials(b: &mut dyn Browser, opts: &LoginOptions<'_>) -> bool {
     }
 }
 
-fn authenticated(cookies: &[StoredCookie]) -> bool {
+fn authenticated(cookies: &[browserhost::Cookie]) -> bool {
+    let stored: Vec<StoredCookie> = cookies.iter().cloned().map(StoredCookie::from).collect();
     let jar = Arc::new(Jar::empty());
-    jar.set_stored(cookies);
+    jar.set_stored(&stored);
     let client = session::Client::with_jar(jar, Duration::from_secs(15));
     matches!(site::check(&client), Ok(p) if p.verdict == site::Verdict::Courses)
 }

@@ -4,6 +4,26 @@ version = "1.2.0"
 edition = "2024"
 description = "SEU 劳动教育课程推送助手"
 license = "MIT"
+repository = "https://github.com/zz6zz666/SEU-Labor-Course-Pusher"
+
+[workspace]
+members = ["crates/traykit", "crates/browserhost", "crates/webmsg", "crates/websurface", "crates/winkit"]
+default-members = ["."]
+resolver = "3"
+
+# Shared metadata + dependency versions for the reusable crates, so they cannot
+# drift apart. The root application keeps its own version (1.2.0) above.
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/zz6zz666/SEU-Labor-Course-Pusher"
+
+[workspace.dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+windows = "0.61"
 
 [[bin]]
 name = "seu-labor"
@@ -11,6 +31,10 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+browserhost = { path = "crates/browserhost" }
+traykit = { path = "crates/traykit" }
+webmsg = { path = "crates/webmsg" }
+websurface = { path = "crates/websurface" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 cookie = "0.18"
@@ -22,30 +46,19 @@ percent-encoding = "2"
 base64 = "0.22"
 rand = "0.8"
 rsa = "0.9"
-pkcs8 = "0.10"
 ureq = { version = "2.10", default-features = false, features = ["native-tls", "json"] }
-tungstenite = { version = "0.24", default-features = false, features = ["native-tls", "handshake"] }
 tauri-winrt-notification = "0.2"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Shell",
     "Win32_UI_HiDpi",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_Graphics_Gdi",
-    "Win32_Graphics_Dwm",
-    "Win32_System_LibraryLoader",
     "Win32_System_Registry",
     "Win32_System_Threading",
-    "Win32_System_SystemServices",
-    "Win32_System_SystemInformation",
-    "Win32_System_Com",
-    "Win32_System_Diagnostics_ToolHelp",
-    "Win32_Security",
-    "Win32_UI_Controls",
+    "Win32_System_Console",
     "Win32_Storage_FileSystem",
+    "Win32_Security",
 ] }
-webview2-com = "0.37"
 
 [profile.release]
 opt-level = "s"

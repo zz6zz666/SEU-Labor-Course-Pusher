@@ -1,16 +1,15 @@
 //! Small helpers over the `windows` crate for the tray icon and its
-//! custom-drawn menu: GDI text/font, work-area clamping and icon loading.
+//! custom-drawn menu: GDI text/font, work-area clamping and DPI.
 
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{HINSTANCE, HWND, POINT, RECT, SIZE};
+use windows::Win32::Foundation::{HINSTANCE, POINT, RECT, SIZE};
 use windows::Win32::Graphics::Gdi::{
     CreateFontW, DrawTextW, GetMonitorInfoW, GetTextExtentPoint32W, MonitorFromPoint,
     CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DRAW_TEXT_FORMAT, HFONT, HDC,
     MONITORINFO, MONITOR_DEFAULTTONEAREST, OUT_DEFAULT_PRECIS,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::WindowsAndMessaging::{CreateIconFromResourceEx, HICON, IMAGE_FLAGS};
+use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 
 /// UTF-16 with a trailing NUL, for `PCWSTR` arguments.
 pub fn utf16(s: &str) -> Vec<u16> {
@@ -81,10 +80,23 @@ pub unsafe fn text_width(hdc: HDC, s: &str) -> i32 {
     sz.cx
 }
 
-/// The window's DPI, floored at the standard 96.
-pub unsafe fn dpi_for_window(hwnd: HWND) -> i32 {
-    let d = unsafe { GetDpiForWindow(hwnd) };
-    if d < 96 { 96 } else { d as i32 }
+/// The effective DPI of the monitor nearest `pt`, floored at the standard 96.
+///
+/// The menu is sized and drawn *before* it is moved under the cursor, so it
+/// must take its DPI from the target monitor rather than from the window's
+/// current (stale) position — otherwise a mixed-DPI multi-monitor setup renders
+/// the popup at the wrong scale.
+pub unsafe fn dpi_for_point(pt: POINT) -> i32 {
+    let mon = unsafe { MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST) };
+    if mon.0.is_null() {
+        return 96;
+    }
+    let mut x: u32 = 0;
+    let mut y: u32 = 0;
+    match unsafe { GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &mut x, &mut y) } {
+        Ok(()) if x >= 96 => x as i32,
+        _ => 96,
+    }
 }
 
 /// Nudges a popup of size `w`x`h` at `(x, y)` so it stays inside the work area
@@ -115,48 +127,4 @@ pub unsafe fn clamp_to_work_area(x: i32, y: i32, w: i32, h: i32, pt: POINT) -> (
         y = wa.top;
     }
     (x, y)
-}
-
-/// Builds an icon from raw `.ico` bytes, choosing the image closest to the
-/// requested width. Returns a null handle on failure.
-pub unsafe fn create_icon_from_ico(ico: &[u8], want: i32) -> HICON {
-    if ico.len() < 6 || ico[0] != 0 || ico[1] != 0 || ico[2] != 1 || ico[3] != 0 {
-        return HICON::default();
-    }
-    let count = u16::from_le_bytes([ico[4], ico[5]]) as usize;
-    let mut best: Option<(usize, usize)> = None;
-    let mut best_score = i32::MAX;
-    for i in 0..count {
-        let base = 6 + i * 16;
-        if base + 16 > ico.len() {
-            break;
-        }
-        let mut w = ico[base] as i32;
-        if w == 0 {
-            w = 256;
-        }
-        let len = u32::from_le_bytes([ico[base + 8], ico[base + 9], ico[base + 10], ico[base + 11]])
-            as usize;
-        let off = u32::from_le_bytes([
-            ico[base + 12],
-            ico[base + 13],
-            ico[base + 14],
-            ico[base + 15],
-        ]) as usize;
-        if len == 0 || off + len > ico.len() {
-            continue;
-        }
-        let score = (w - want).abs();
-        if score < best_score {
-            best_score = score;
-            best = Some((off, len));
-        }
-    }
-    let Some((off, len)) = best else {
-        return HICON::default();
-    };
-    unsafe {
-        CreateIconFromResourceEx(&ico[off..off + len], true, 0x0003_0000, 0, 0, IMAGE_FLAGS(0))
-            .unwrap_or_default()
-    }
 }

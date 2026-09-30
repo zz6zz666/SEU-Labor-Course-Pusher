@@ -30,7 +30,7 @@ const PROCESS_COMMAND_LINE_INFORMATION: u32 = 60;
 
 /// Terminates every browser process whose command line references `dir`.
 /// Best-effort: failures (e.g. another user's/elevated process) are ignored.
-pub fn kill_browsers_for_profile(dir: &str) {
+pub fn kill_for_profile(dir: &str) {
     let needle = dir.to_lowercase();
     if needle.is_empty() {
         return;

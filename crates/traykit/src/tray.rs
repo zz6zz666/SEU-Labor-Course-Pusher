@@ -1,10 +1,6 @@
-//! The resident tray icon and its Fluent popup menu. The look and behaviour are
-//! a manual Win32 replica of the original implementation.
+//! The resident tray icon and its message window. Menu content is supplied by
+//! the host as data (see [`MenuItem`]); this module only owns the mechanism.
 
-pub mod menu;
-pub mod winapi;
-
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
@@ -16,79 +12,129 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, GetSystemMetrics,
-    LoadCursorW, LoadImageW, PostQuitMessage, RegisterClassExW, RegisterWindowMessageW,
-    TranslateMessage, HICON, IDC_ARROW, IMAGE_FLAGS, IMAGE_ICON, MSG,
-    SM_CXSMICON, SM_CYSMICON, WM_APP, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONUP,
-    WM_RBUTTONUP, WNDCLASSEXW, WINDOW_EX_STYLE, WINDOW_STYLE,
+    GetWindowLongPtrW, LoadCursorW, LoadImageW, PostQuitMessage, RegisterClassExW,
+    RegisterWindowMessageW, SetWindowLongPtrW, TranslateMessage, GWLP_USERDATA, HICON, IDC_ARROW,
+    IMAGE_FLAGS, IMAGE_ICON, MSG, SM_CXSMICON, SM_CYSMICON, WM_APP, WM_CLOSE, WM_CONTEXTMENU,
+    WM_DESTROY, WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSEXW, WINDOW_EX_STYLE, WINDOW_STYLE,
 };
 
-use crate::assets;
-use menu::{current_menu_ptr, set_current_menu, Menu};
-use winapi::{copy_into, create_icon_from_ico, module_handle, utf16};
+use crate::menu::Menu;
+use crate::winapi::{copy_into, module_handle, utf16};
 
+pub type BoolFn = Arc<dyn Fn() -> bool + Send + Sync>;
+pub type StringFn = Arc<dyn Fn() -> String + Send + Sync>;
 pub type Callback = Arc<dyn Fn() + Send + Sync>;
-pub type BoolGetter = Arc<dyn Fn() -> bool + Send + Sync>;
-pub type StringGetter = Arc<dyn Fn() -> String + Send + Sync>;
-pub type LinesGetter = Arc<dyn Fn() -> Vec<String> + Send + Sync>;
+pub type CommandFn = Arc<dyn Fn(u32) + Send + Sync>;
+pub type ItemsFn = Arc<dyn Fn() -> Vec<MenuItem> + Send + Sync>;
 
-/// The callbacks the tray menu invokes. The status and toggle getters are
-/// evaluated when the menu is about to be shown, so labels and check marks
-/// always reflect current state.
-#[derive(Clone)]
-pub struct Actions {
-    pub status_text: StringGetter,
-    pub status_lines: LinesGetter,
-    pub version: String,
-    pub on_open_course: Callback,
-    pub on_login: Callback,
-    pub on_fetch_now: Callback,
-    pub on_open_wizard: Callback,
-    pub on_open_config: Callback,
-    pub on_open_logs: Callback,
-    pub is_auto_start: BoolGetter,
-    pub toggle_auto_start: Callback,
-    pub is_auto_select: BoolGetter,
-    pub toggle_auto_select: Callback,
-    pub on_quit: Callback,
+/// What a menu row is.
+pub enum ItemKind {
+    /// Clickable command; its id is delivered to `on_command`.
+    Command,
+    /// Clickable toggle with a live check mark; clicking keeps the menu open so
+    /// the check updates in place.
+    Toggle(BoolFn),
+    /// A non-clickable status line rendered in grey.
+    Info,
+    /// A horizontal rule.
+    Separator,
 }
 
-static CURRENT_TRAY: AtomicUsize = AtomicUsize::new(0);
-
-fn current_tray_ptr() -> *mut Tray {
-    CURRENT_TRAY.load(Ordering::SeqCst) as *mut Tray
+impl ItemKind {
+    pub(crate) fn is_separator(&self) -> bool {
+        matches!(self, ItemKind::Separator)
+    }
+    pub(crate) fn is_info(&self) -> bool {
+        matches!(self, ItemKind::Info)
+    }
 }
 
-pub struct Tray {
-    pub actions: Actions,
-    pub hwnd: HWND,
-    pub icon: HICON,
-    pub callback: u32,
-    pub taskbar_id: u32,
-    pub added: bool,
-    pub menu: *mut Menu,
-    /// Reserved for a future graceful shutdown (the app currently exits via
-    /// `process::exit`, so the flag is not set yet).
-    pub stopped: bool,
+/// One row of the popup menu. Build these on every show so labels and check
+/// marks reflect current state.
+pub struct MenuItem {
+    pub id: u32,
+    pub label: String,
+    pub glyph: u16,
+    pub kind: ItemKind,
+}
+
+impl MenuItem {
+    pub fn command(id: u32, label: impl Into<String>, glyph: u16) -> Self {
+        Self {
+            id,
+            label: label.into(),
+            glyph,
+            kind: ItemKind::Command,
+        }
+    }
+    pub fn toggle(id: u32, label: impl Into<String>, checked: BoolFn) -> Self {
+        Self {
+            id,
+            label: label.into(),
+            glyph: 0,
+            kind: ItemKind::Toggle(checked),
+        }
+    }
+    pub fn info(label: impl Into<String>) -> Self {
+        Self {
+            id: 0,
+            label: label.into(),
+            glyph: 0,
+            kind: ItemKind::Info,
+        }
+    }
+    pub fn separator() -> Self {
+        Self {
+            id: 0,
+            label: String::new(),
+            glyph: 0,
+            kind: ItemKind::Separator,
+        }
+    }
+}
+
+/// The host-supplied policy for a tray: its icon, tooltip, rows and callbacks.
+pub struct TrayConfig {
+    pub icon_ico: &'static [u8],
+    pub tooltip: StringFn,
+    pub items: ItemsFn,
+    pub on_command: CommandFn,
+    pub on_left_click: Callback,
+}
+
+/// The leaked tray state. Shared with the popup menu via raw pointer.
+pub(crate) struct TrayInner {
+    pub(crate) tooltip: StringFn,
+    pub(crate) items: ItemsFn,
+    pub(crate) on_command: CommandFn,
+    pub(crate) on_left_click: Callback,
+    pub(crate) hwnd: HWND,
+    pub(crate) icon: HICON,
+    pub(crate) callback: u32,
+    pub(crate) taskbar_id: u32,
+    pub(crate) added: bool,
+    pub(crate) menu: *mut Menu,
+    pub(crate) stopped: bool,
 }
 
 /// Owns the leaked tray state and offers thread-safe operations.
 #[derive(Clone, Copy)]
-pub struct TrayHandle(pub *mut Tray);
+pub struct Tray(pub(crate) *mut TrayInner);
 
-unsafe impl Send for TrayHandle {}
-unsafe impl Sync for TrayHandle {}
+unsafe impl Send for Tray {}
+unsafe impl Sync for Tray {}
 
-impl TrayHandle {
-    /// Prepares the tray icon and menu. Must be called on the thread that will
-    /// later call `run` (the message-loop thread).
-    pub fn new(actions: Actions) -> Result<TrayHandle> {
+impl Tray {
+    /// Creates the tray icon and its popup menu. Must be called on the thread
+    /// that will later call [`Tray::run`] (the message-loop thread).
+    pub fn new(cfg: TrayConfig) -> Result<Tray> {
         let hinst = module_handle();
 
         let cx = unsafe { GetSystemMetrics(SM_CXSMICON) };
         let cy = unsafe { GetSystemMetrics(SM_CYSMICON) };
-        let mut icon = unsafe { create_icon_from_ico(assets::ICON_ICO, cx) };
-        if icon.0.is_null() {
-            icon = unsafe {
+        let mut hicon = winkit::from_ico(cfg.icon_ico, cx);
+        if hicon.0.is_null() {
+            hicon = unsafe {
                 LoadImageW(
                     Some(hinst),
                     PCWSTR(32512 as *const u16),
@@ -106,7 +152,7 @@ impl TrayHandle {
         let taskbar = utf16("TaskbarCreated");
         let taskbar_id = unsafe { RegisterWindowMessageW(PCWSTR(taskbar.as_ptr())) };
 
-        let cls = utf16("seuLaborTrayMsg");
+        let cls = utf16("traykit_tray");
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
             hInstance: hinst,
@@ -115,11 +161,11 @@ impl TrayHandle {
             lpszClassName: PCWSTR(cls.as_ptr()),
             ..Default::default()
         };
-        if unsafe { RegisterClassExW(&wc) } == 0 {
-            return Err(anyhow!("创建托盘消息窗口失败"));
-        }
+        // A second tray in the same process re-registers the same class, which
+        // is harmless; `CreateWindowExW` below is the real success gate.
+        unsafe { RegisterClassExW(&wc) };
 
-        let title = utf16("SEU 劳动教育课程监控");
+        let title = utf16("traykit");
         let hwnd = unsafe {
             CreateWindowExW(
                 WINDOW_EX_STYLE(0),
@@ -137,30 +183,32 @@ impl TrayHandle {
             )
         }?;
 
-        let mut tray = Box::new(Tray {
-            actions,
+        let mut inner = Box::new(TrayInner {
+            tooltip: cfg.tooltip,
+            items: cfg.items,
+            on_command: cfg.on_command,
+            on_left_click: cfg.on_left_click,
             hwnd,
-            icon,
+            icon: hicon,
             callback,
             taskbar_id,
             added: false,
             menu: std::ptr::null_mut(),
             stopped: false,
         });
-        let tray_ptr: *mut Tray = &mut *tray;
-        let menu_ptr = match Menu::new(tray_ptr) {
+        let inner_ptr: *mut TrayInner = &mut *inner;
+        let menu_ptr = match Menu::new(inner_ptr) {
             Some(m) => Box::into_raw(m),
             None => {
                 let _ = unsafe { DestroyWindow(hwnd) };
-                return Err(anyhow!("创建菜单窗口失败"));
+                return Err(anyhow!("failed to create the popup menu"));
             }
         };
-        tray.menu = menu_ptr;
-        let ptr = Box::into_raw(tray);
-        CURRENT_TRAY.store(ptr as usize, Ordering::SeqCst);
-        set_current_menu(menu_ptr);
+        inner.menu = menu_ptr;
+        let ptr = Box::into_raw(inner);
+        unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, ptr as isize) };
 
-        let handle = TrayHandle(ptr);
+        let handle = Tray(ptr);
         handle.add_icon()?;
         Ok(handle)
     }
@@ -176,16 +224,15 @@ impl TrayHandle {
             hIcon: t.icon,
             ..Default::default()
         };
-        copy_into(&mut nid.szTip, &(t.actions.status_text)());
+        copy_into(&mut nid.szTip, &(t.tooltip)());
         if !unsafe { Shell_NotifyIconW(NIM_ADD, &nid) }.as_bool() {
-            return Err(anyhow!("添加托盘图标失败"));
+            return Err(anyhow!("failed to add the tray icon"));
         }
         t.added = true;
         Ok(())
     }
 
-    /// Removes the tray icon. Reserved for a future graceful shutdown.
-    #[allow(dead_code)]
+    /// Removes the tray icon.
     fn remove_icon(&self) {
         let t = unsafe { &mut *self.0 };
         if !t.added {
@@ -211,7 +258,7 @@ impl TrayHandle {
             uFlags: NIF_TIP,
             ..Default::default()
         };
-        copy_into(&mut nid.szTip, &(t.actions.status_text)());
+        copy_into(&mut nid.szTip, &(t.tooltip)());
         let _ = unsafe { Shell_NotifyIconW(NIM_MODIFY, &nid) };
     }
 
@@ -230,9 +277,7 @@ impl TrayHandle {
         }
     }
 
-    /// Removes the icon and quits the message loop. Reserved for a future
-    /// graceful shutdown.
-    #[allow(dead_code)]
+    /// Removes the icon and quits the message loop.
     pub fn stop(&self) {
         let t = unsafe { &mut *self.0 };
         if t.stopped {
@@ -245,7 +290,7 @@ impl TrayHandle {
 }
 
 unsafe extern "system" fn tray_wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    let ptr = current_tray_ptr();
+    let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut TrayInner;
     if ptr.is_null() {
         return unsafe { DefWindowProcW(hwnd, msg, wp, lp) };
     }
@@ -253,17 +298,15 @@ unsafe extern "system" fn tray_wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
     if msg == t.callback {
         match lp.0 as u32 {
             WM_LBUTTONUP => {
-                let menu = current_menu_ptr();
-                if !menu.is_null() {
-                    unsafe { (*menu).hide() };
+                if !t.menu.is_null() {
+                    unsafe { (*t.menu).hide() };
                 }
-                let action = t.actions.on_open_course.clone();
+                let action = t.on_left_click.clone();
                 std::thread::spawn(move || action());
             }
             WM_RBUTTONUP | WM_CONTEXTMENU => {
-                let menu = current_menu_ptr();
-                if !menu.is_null() {
-                    unsafe { (*menu).show() };
+                if !t.menu.is_null() {
+                    unsafe { (*t.menu).show() };
                 }
             }
             _ => {}
@@ -283,7 +326,7 @@ unsafe extern "system" fn tray_wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
             if t.taskbar_id != 0 && msg == t.taskbar_id {
                 // Explorer restarted: re-add the icon.
                 t.added = false;
-                let _ = TrayHandle(ptr).add_icon();
+                let _ = Tray(ptr).add_icon();
                 return LRESULT(0);
             }
             unsafe { DefWindowProcW(hwnd, msg, wp, lp) }

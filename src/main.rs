@@ -6,14 +6,14 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod appwindow;
 mod assets;
 mod autostart;
 mod brand;
-mod browser;
 mod config;
+mod fsutil;
 mod logging;
 mod login;
+mod login_scripts;
 mod notify;
 mod osutil;
 mod paths;
@@ -23,7 +23,6 @@ mod session;
 mod singleinstance;
 mod site;
 mod state;
-mod ui;
 mod watcher;
 mod web;
 mod wizard;
@@ -33,7 +32,6 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use crate::browser::Browser;
 use crate::logging::Logger;
 use crate::notify::Dispatcher;
 use crate::selection::Runner;
@@ -50,7 +48,7 @@ fn main() {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     if has_flag(&args, "-version") {
-        println!("{}", VERSION);
+        osutil::console_println(VERSION);
         return;
     }
     if has_flag(&args, "-wizard-ui") {
@@ -58,7 +56,7 @@ fn main() {
         let data = flag_value(&args, "-wiz-data").unwrap_or_default();
         let browser = flag_value(&args, "-wiz-browser").unwrap_or_default();
         if let Err(e) = run_wizard_ui(&url, &data, &browser) {
-            eprintln!("错误: {}", e);
+            osutil::console_println(&format!("错误: {}", e));
             std::process::exit(1);
         }
         return;
@@ -69,7 +67,7 @@ fn main() {
     let show_wizard = has_flag(&args, "-wizard");
 
     if let Err(e) = run(once, do_login, show_wizard) {
-        eprintln!("错误: {}", e);
+        osutil::console_println(&format!("错误: {}", e));
         std::process::exit(1);
     }
 }
@@ -90,7 +88,7 @@ fn flag_value(args: &[String], name: &str) -> Option<String> {
 }
 
 struct WizardState {
-    srv: Option<Arc<wizard::Server>>,
+    srv: Option<Arc<webmsg::Server>>,
     proc: Option<proc::ChildProc>,
 }
 
@@ -103,7 +101,7 @@ struct App {
     dispatcher: Arc<Dispatcher>,
     log: Logger,
     login_mu: Mutex<()>,
-    course_view: Mutex<Option<browser::cdp::Chrome>>,
+    course_view: Mutex<Option<browserhost::Session>>,
     wizard: Mutex<WizardState>,
 }
 
@@ -201,7 +199,7 @@ fn run(once: bool, do_login: bool, show_wizard: bool) -> Result<()> {
         return Ok(());
     }
 
-    let tray = match ui::TrayHandle::new(build_tray_actions(&app)) {
+    let tray = match traykit::Tray::new(build_tray(&app)) {
         Ok(t) => Some(t),
         Err(e) => {
             log.warn(format!("创建系统托盘失败,将以无界面方式常驻: {}", e));
@@ -391,7 +389,7 @@ fn open_login_window(app: &Arc<App>) {
             app.log.info("登录态已保存,后台现在可以直接轮询");
             app.w.trigger_now();
         }
-        Err(e) => app.log.warn(format!("登录失败: {}", e)),
+        Err(e) => app.log.warn(format!("登录失败: {}", browser_error(&e))),
     }
 }
 
@@ -413,15 +411,23 @@ fn open_course_view(app: &Arc<App>) {
         .to_string_lossy()
         .into_owned();
     let exe = app.store.get().browser_path().map(str::to_string);
-    match browser::cdp::Chrome::launch(
-        true,
-        &profile,
-        Some(session::COURSE_PAGE),
-        browser::cdp::WindowMode::Browser,
-        exe.as_deref(),
-    ) {
+    match browserhost::Session::launch(browserhost::SessionConfig {
+        visible: true,
+        profile_dir: profile,
+        url: Some(session::COURSE_PAGE.to_string()),
+        mode: browserhost::WindowMode::Browser,
+        exec_path: exe,
+        profile_name: brand::TITLE.to_string(),
+    }) {
         Ok(mut win) => {
-            if let Err(e) = win.set_cookies(&app.client.jar.all()) {
+            let cookies: Vec<browserhost::Cookie> = app
+                .client
+                .jar
+                .all()
+                .iter()
+                .map(|c| c.to_browser_cookie())
+                .collect();
+            if let Err(e) = win.set_cookies(&cookies) {
                 app.log.warn(format!("注入登录态失败: {}", e));
             }
             if let Err(e) = win.navigate(session::COURSE_PAGE) {
@@ -429,7 +435,19 @@ fn open_course_view(app: &Arc<App>) {
             }
             *guard = Some(win);
         }
-        Err(e) => app.log.warn(format!("打开选课页失败: {}", e)),
+        Err(e) => app.log.warn(format!("打开选课页失败: {}", browser_error(&e))),
+    }
+}
+
+/// Maps `browserhost`'s "no browser found" error to actionable, localized
+/// guidance; every other error is passed through unchanged.
+fn browser_error(e: &anyhow::Error) -> String {
+    if browserhost::is_no_browser(e) {
+        "未找到可用的 Chromium 内核浏览器(Edge/Chrome 等),请在 config.json 设置 \
+         browser.path 或安装 Edge/Chrome 后重试"
+            .to_string()
+    } else {
+        e.to_string()
     }
 }
 
@@ -453,9 +471,9 @@ fn open_wizard(app: &Arc<App>) {
             srv.close();
         }
     }
-    browser::winproc::kill_browsers_for_profile(&browser_profile);
+    browserhost::kill_for_profile(&browser_profile);
 
-    let srv = match wizard::open(build_wizard_actions(app), logging::new("wizard")) {
+    let srv = match wizard::open(build_wizard_actions(app)) {
         Ok(s) => s,
         Err(e) => {
             app.log.warn(format!("启动设置向导失败: {}", e));
@@ -508,7 +526,7 @@ fn open_wizard(app: &Arc<App>) {
                             p.kill();
                         }
                         drop(wz);
-                        crate::browser::winproc::kill_browsers_for_profile(&bp);
+                        browserhost::kill_for_profile(&bp);
                     });
                 }));
             }
@@ -549,72 +567,106 @@ fn open_wizard(app: &Arc<App>) {
     }
 }
 
-fn build_tray_actions(app: &Arc<App>) -> ui::Actions {
-    let a = app.clone();
-    let status_lines_cb: ui::LinesGetter = Arc::new(move || status_lines(&a));
-    let a = app.clone();
-    let status_text: ui::StringGetter =
-        Arc::new(move || status_lines(&a).into_iter().next().unwrap_or_default());
+mod tray_cmd {
+    pub const OPEN_COURSE: u32 = 1;
+    pub const LOGIN: u32 = 2;
+    pub const FETCH_NOW: u32 = 3;
+    pub const OPEN_LOGS: u32 = 4;
+    pub const OPEN_CONFIG: u32 = 5;
+    pub const OPEN_WIZARD: u32 = 6;
+    pub const TOGGLE_AUTOSTART: u32 = 7;
+    pub const TOGGLE_AUTOSELECT: u32 = 8;
+    pub const QUIT: u32 = 9;
+}
 
+fn build_tray(app: &Arc<App>) -> traykit::TrayConfig {
     let a = app.clone();
-    let on_open_course: ui::Callback = Arc::new(move || {
+    let tooltip: traykit::StringFn =
+        Arc::new(move || status_lines(&a).into_iter().next().unwrap_or_default());
+    let a = app.clone();
+    let items: traykit::ItemsFn = Arc::new(move || tray_items(&a));
+    let a = app.clone();
+    let on_command: traykit::CommandFn = Arc::new(move |id| tray_command(&a, id));
+    let a = app.clone();
+    let on_left_click: traykit::Callback = Arc::new(move || {
         let a = a.clone();
         std::thread::spawn(move || open_course_view(&a));
     });
-    let a = app.clone();
-    let on_login: ui::Callback = Arc::new(move || {
-        let a = a.clone();
-        std::thread::spawn(move || open_login_window(&a));
-    });
-    let a = app.clone();
-    let on_fetch_now: ui::Callback = Arc::new(move || a.w.trigger_now());
-    let a = app.clone();
-    let on_open_wizard: ui::Callback = Arc::new(move || {
-        let a = a.clone();
-        std::thread::spawn(move || open_wizard(&a));
-    });
-    let a = app.clone();
-    let on_open_config: ui::Callback = Arc::new(move || {
-        let _ = osutil::open_target(&a.p.config_path.to_string_lossy());
-    });
-    let a = app.clone();
-    let on_open_logs: ui::Callback = Arc::new(move || {
-        let _ = osutil::open_folder(&a.p.log_dir.to_string_lossy());
-    });
+    traykit::TrayConfig {
+        icon_ico: assets::ICON_ICO,
+        tooltip,
+        items,
+        on_command,
+        on_left_click,
+    }
+}
 
-    let is_auto_start: ui::BoolGetter = Arc::new(autostart::is_enabled);
+fn tray_items(app: &Arc<App>) -> Vec<traykit::MenuItem> {
+    use traykit::MenuItem;
+    let mut v = Vec::new();
+    for line in status_lines(app) {
+        if !line.is_empty() {
+            v.push(MenuItem::info(line));
+        }
+    }
+    v.push(MenuItem::separator());
+    v.push(MenuItem::command(tray_cmd::OPEN_COURSE, "打开选课页", 0xE774));
+    v.push(MenuItem::command(tray_cmd::LOGIN, "重新登录", 0xE72E));
+    v.push(MenuItem::separator());
+    v.push(MenuItem::command(tray_cmd::FETCH_NOW, "立即抓取一次", 0xE72C));
+    v.push(MenuItem::command(tray_cmd::OPEN_LOGS, "打开日志目录", 0xE8B7));
+    v.push(MenuItem::command(
+        tray_cmd::OPEN_CONFIG,
+        "打开 config.json",
+        0xE8A5,
+    ));
+    v.push(MenuItem::command(tray_cmd::OPEN_WIZARD, "设置向导", 0xE713));
+    v.push(MenuItem::separator());
+    v.push(MenuItem::toggle(
+        tray_cmd::TOGGLE_AUTOSTART,
+        "开机自启",
+        Arc::new(autostart::is_enabled),
+    ));
     let a = app.clone();
-    let toggle_auto_start: ui::Callback = Arc::new(move || {
-        let actual = autostart::apply(!autostart::is_enabled());
-        let _ = a.store.update(|c| c.behavior.auto_launch_at_login = actual);
-    });
-    let a = app.clone();
-    let is_auto_select: ui::BoolGetter = Arc::new(move || a.store.get().behavior.auto_select);
-    let a = app.clone();
-    let toggle_auto_select: ui::Callback = Arc::new(move || {
-        let _ = a.store.update(|c| c.behavior.auto_select = !c.behavior.auto_select);
-    });
-    let a = app.clone();
-    let on_quit: ui::Callback = Arc::new(move || {
-        let _ = a.client.jar.save();
-        std::process::exit(0);
-    });
+    v.push(MenuItem::toggle(
+        tray_cmd::TOGGLE_AUTOSELECT,
+        "自动选课",
+        Arc::new(move || a.store.get().behavior.auto_select),
+    ));
+    v.push(MenuItem::separator());
+    if !VERSION.is_empty() {
+        v.push(MenuItem::info(format!("版本 {}", VERSION)));
+    }
+    v.push(MenuItem::command(tray_cmd::QUIT, "退出", 0xE8BB));
+    v
+}
 
-    ui::Actions {
-        status_text,
-        status_lines: status_lines_cb,
-        version: VERSION.to_string(),
-        on_open_course,
-        on_login,
-        on_fetch_now,
-        on_open_wizard,
-        on_open_config,
-        on_open_logs,
-        is_auto_start,
-        toggle_auto_start,
-        is_auto_select,
-        toggle_auto_select,
-        on_quit,
+fn tray_command(app: &Arc<App>, id: u32) {
+    match id {
+        tray_cmd::OPEN_COURSE => open_course_view(app),
+        tray_cmd::LOGIN => open_login_window(app),
+        tray_cmd::FETCH_NOW => app.w.trigger_now(),
+        tray_cmd::OPEN_LOGS => {
+            let _ = osutil::open_folder(&app.p.log_dir.to_string_lossy());
+        }
+        tray_cmd::OPEN_CONFIG => {
+            let _ = osutil::open_target(&app.p.config_path.to_string_lossy());
+        }
+        tray_cmd::OPEN_WIZARD => open_wizard(app),
+        tray_cmd::TOGGLE_AUTOSTART => {
+            let actual = autostart::apply(!autostart::is_enabled());
+            let _ = app.store.update(|c| c.behavior.auto_launch_at_login = actual);
+        }
+        tray_cmd::TOGGLE_AUTOSELECT => {
+            let _ = app
+                .store
+                .update(|c| c.behavior.auto_select = !c.behavior.auto_select);
+        }
+        tray_cmd::QUIT => {
+            let _ = app.client.jar.save();
+            std::process::exit(0);
+        }
+        _ => {}
     }
 }
 
@@ -777,7 +829,8 @@ fn run_login(
         password: &cred.password,
         exec_path: exe.as_deref(),
         log,
-    })?;
+    })
+    .map_err(|e| anyhow::anyhow!("{}", browser_error(&e)))?;
 
     client.jar.set_stored(&cookies);
     client.jar.save()?;
@@ -791,69 +844,41 @@ fn run_login(
 
 fn run_wizard_ui(url: &str, data_path: &str, browser: &str) -> Result<()> {
     let data = if data_path.is_empty() {
-        std::env::temp_dir()
-            .join("seu-labor-wizard-webview")
-            .to_string_lossy()
-            .into_owned()
+        std::env::temp_dir().join("seu-labor-wizard-webview")
     } else {
-        data_path.to_string()
+        std::path::PathBuf::from(data_path)
     };
     let url = if url.is_empty() { "about:blank" } else { url };
 
-    if wizard_uses_webview2() {
-        // The native window is sized in physical pixels, so scale the logical
-        // design dimensions by the display DPI.
-        let scale = osutil::dpi_scale();
-        let dim = |v: i32| ((v as f64) * scale).round() as i32;
-        let opts = appwindow::Options {
-            title: brand::TITLE.to_string(),
-            width: dim(brand::DESIGN_WIDTH),
-            height: dim(brand::DESIGN_HEIGHT),
-            min_width: dim(brand::MIN_WIDTH),
-            min_height: dim(brand::MIN_HEIGHT),
-            data_path: data,
-        };
-        let win = appwindow::open(url, &opts)?;
-        win.run()?;
-        return Ok(());
-    }
-
-    // No WebView2: borrow an installed Chromium and render the very same page in
-    // a chromeless app window, so the settings screen still shows up as a
-    // standalone native-looking window rather than a browser tab. Chromium's
-    // `--window-size` is in logical units, so the design size goes unscaled.
-    let profile = std::path::Path::new(&data)
-        .join("browser")
-        .to_string_lossy()
-        .into_owned();
-    let exec = (!browser.trim().is_empty()).then_some(browser);
-    let mut chrome = crate::browser::cdp::Chrome::launch(
-        true,
-        &profile,
-        Some(url),
-        crate::browser::cdp::WindowMode::AppFramed {
-            width: brand::DESIGN_WIDTH,
-            height: brand::DESIGN_HEIGHT,
-        },
-        exec,
-    )?;
-    while chrome.is_alive() {
-        std::thread::sleep(Duration::from_millis(400));
-    }
+    let cfg = websurface::SurfaceConfig {
+        url: url.to_string(),
+        title: brand::TITLE.to_string(),
+        logical_width: brand::DESIGN_WIDTH,
+        logical_height: brand::DESIGN_HEIGHT,
+        min_width: brand::MIN_WIDTH,
+        min_height: brand::MIN_HEIGHT,
+        icon_ico: assets::ICON_ICO,
+        data_dir: data,
+        browser_override: (!browser.trim().is_empty()).then(|| browser.to_string()),
+        profile_name: brand::TITLE.to_string(),
+        chromeless: true,
+    };
+    let mut host = websurface::WebHost::new()?;
+    host.open(cfg, wizard_engine())?;
+    host.run()?;
     Ok(())
 }
 
-/// Chooses the settings-window engine. `SEU_WIZARD_ENGINE=browser|webview`
-/// forces one for troubleshooting; otherwise WebView2 when present, else a
-/// borrowed Chromium.
-fn wizard_uses_webview2() -> bool {
+/// `SEU_WIZARD_ENGINE=browser|webview` forces one engine for troubleshooting;
+/// otherwise WebView2 when present, else a borrowed Chromium.
+fn wizard_engine() -> websurface::Engine {
     match std::env::var("SEU_WIZARD_ENGINE")
         .ok()
         .as_deref()
         .map(str::trim)
     {
-        Some("browser") => false,
-        Some("webview") => true,
-        _ => appwindow::is_available(),
+        Some("browser") => websurface::Engine::Borrowed,
+        Some("webview") => websurface::Engine::WebView2,
+        _ => websurface::Engine::Auto,
     }
 }

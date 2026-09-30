@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check (must be warning-free)
+        run: cargo check --workspace --all-targets --message-format short
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Feature combinations
+        run: |
+          cargo check -p websurface --no-default-features --message-format short
+          cargo check -p websurface --no-default-features --features webview2 --message-format short
+          cargo check -p websurface --no-default-features --features borrowed-browser --message-format short
+
+      - name: Build
+        run: cargo build --release

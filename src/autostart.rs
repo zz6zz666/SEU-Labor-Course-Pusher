@@ -9,15 +9,13 @@ use windows::Win32::System::Registry::{
     REG_OPTION_NON_VOLATILE, REG_SZ, REG_VALUE_TYPE,
 };
 
+use crate::osutil::wide;
+
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const VALUE_NAME: &str = "SEULaborPusher";
 
-fn to_wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
 pub fn is_enabled() -> bool {
-    let subkey = to_wide(RUN_KEY);
+    let subkey = wide(RUN_KEY);
     let mut hkey = HKEY::default();
     let r = unsafe {
         RegOpenKeyExW(
@@ -41,8 +39,8 @@ pub fn is_enabled() -> bool {
 pub fn enable() -> Result<()> {
     let exe = std::env::current_exe()?;
     let data = format!("\"{}\"", exe.display());
-    let subkey = to_wide(RUN_KEY);
-    let name = to_wide(VALUE_NAME);
+    let subkey = wide(RUN_KEY);
+    let name = wide(VALUE_NAME);
     let mut hkey = HKEY::default();
     let r = unsafe {
         RegCreateKeyExW(
@@ -73,8 +71,8 @@ pub fn enable() -> Result<()> {
 }
 
 pub fn disable() -> Result<()> {
-    let subkey = to_wide(RUN_KEY);
-    let name = to_wide(VALUE_NAME);
+    let subkey = wide(RUN_KEY);
+    let name = wide(VALUE_NAME);
     let mut hkey = HKEY::default();
     let r = unsafe {
         RegOpenKeyExW(
@@ -109,7 +107,7 @@ fn as_bytes(wide: &[u16]) -> &[u8] {
 }
 
 fn query_value(hkey: HKEY) -> Option<String> {
-    let name = to_wide(VALUE_NAME);
+    let name = wide(VALUE_NAME);
     let mut ty = REG_VALUE_TYPE::default();
     let mut size: u32 = 0;
     let r = unsafe {

@@ -73,6 +73,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "browserhost"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde_json",
+ "tungstenite",
+ "ureq",
+ "windows 0.61.3",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1250,10 +1261,10 @@ version = "1.2.0"
 dependencies = [
  "anyhow",
  "base64",
+ "browserhost",
  "chrono",
  "cookie",
  "percent-encoding",
- "pkcs8",
  "rand",
  "regex",
  "rsa",
@@ -1261,10 +1272,11 @@ dependencies = [
  "serde",
  "serde_json",
  "tauri-winrt-notification",
- "tungstenite",
+ "traykit",
  "ureq",
  "url",
- "webview2-com",
+ "webmsg",
+ "websurface",
  "windows 0.61.3",
 ]
 
@@ -1521,6 +1533,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "traykit"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "windows 0.61.3",
+ "winkit",
+]
+
+[[package]]
 name = "tungstenite"
 version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1666,6 +1687,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23f0c9c52aa7cd7d77769a4cfe2a9adb1b331f489a41d912ce14513d5ab995c6"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "webmsg"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "websurface"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "browserhost",
+ "serde_json",
+ "webmsg",
+ "webview2-com",
+ "windows 0.61.3",
+ "winkit",
 ]
 
 [[package]]
@@ -1986,6 +2029,13 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
+
+[[package]]
+name = "winkit"
+version = "0.1.0"
+dependencies = [
+ "windows 0.61.3",
+]
 
 [[package]]
 name = "wit-bindgen"

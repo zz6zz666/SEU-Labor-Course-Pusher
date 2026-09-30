@@ -8,12 +8,10 @@ use windows::Win32::System::Threading::{
     INFINITE,
 };
 
+use crate::osutil::wide;
+
 const MUTEX_NAME: &str = r"Local\SEULaborPusher";
 const EVENT_NAME: &str = r"Local\SEULaborPusher_ShowWizard";
-
-fn to_wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
-}
 
 pub struct Instance {
     mutex: HANDLE,
@@ -25,7 +23,7 @@ unsafe impl Send for Instance {}
 /// Takes the single-instance lock. `already = true` means another instance owns
 /// it (and the caller should signal and exit).
 pub fn acquire() -> (Option<Instance>, bool) {
-    let name = to_wide(MUTEX_NAME);
+    let name = wide(MUTEX_NAME);
     let Ok(mutex) = (unsafe { CreateMutexW(None, false, PCWSTR(name.as_ptr())) }) else {
         return (None, false);
     };
@@ -36,7 +34,7 @@ pub fn acquire() -> (Option<Instance>, bool) {
         return (None, true);
     }
 
-    let ev_name = to_wide(EVENT_NAME);
+    let ev_name = wide(EVENT_NAME);
     let event =
         unsafe { CreateEventW(None, false, false, PCWSTR(ev_name.as_ptr())) }.unwrap_or_default();
     (Some(Instance { mutex, event }), false)
@@ -44,7 +42,7 @@ pub fn acquire() -> (Option<Instance>, bool) {
 
 /// Wakes the running instance's wizard request.
 pub fn signal_existing() -> bool {
-    let name = to_wide(EVENT_NAME);
+    let name = wide(EVENT_NAME);
     let Ok(event) = (unsafe { OpenEventW(EVENT_MODIFY_STATE, false, PCWSTR(name.as_ptr())) })
     else {
         return false;

@@ -7,9 +7,10 @@
 //! launcher try them in order.
 
 use std::collections::HashSet;
+use std::error::Error as StdError;
+use std::fmt;
 use std::path::PathBuf;
 
-use anyhow::anyhow;
 use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::ERROR_SUCCESS;
 use windows::Win32::System::Registry::{
@@ -42,12 +43,28 @@ const CHROMIUM_EXES: &[&str] = &[
 /// launch. Everything else is tried and rejected only if it opens no debug port.
 const NON_CDP_EXES: &[&str] = &["firefox.exe", "iexplore.exe", "safari.exe"];
 
-/// The error shown when nothing usable was found.
+/// Returned by [`no_browser_error`] when no Chromium-family browser is present.
+#[derive(Debug)]
+pub struct NoBrowser;
+
+impl fmt::Display for NoBrowser {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("no Chromium-based browser (Edge, Chrome, ...) was found")
+    }
+}
+
+impl StdError for NoBrowser {}
+
+/// The error returned when nothing usable was found. The host is expected to
+/// map this to its own, actionable guidance.
 pub fn no_browser_error() -> anyhow::Error {
-    anyhow!(
-        "未找到可用的 Chromium 内核浏览器(Edge/Chrome 等)。\
-         请在 config.json 设置 browser.path,或安装 Edge/Chrome 后重试"
-    )
+    anyhow::Error::new(NoBrowser)
+}
+
+/// Whether `err` is the [`NoBrowser`] error, so a host can offer its own
+/// guidance instead of this crate's generic message.
+pub fn is_no_browser(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<NoBrowser>().is_some()
 }
 
 /// Returns usable browser executables in preference order: explicit override,
@@ -56,37 +73,40 @@ pub fn no_browser_error() -> anyhow::Error {
 pub fn candidates(override_path: Option<&str>) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    let mut add = |p: PathBuf| {
-        if !p.is_file() {
-            return;
-        }
-        let key = p.to_string_lossy().to_lowercase();
-        if seen.insert(key) {
-            out.push(p.to_string_lossy().into_owned());
-        }
-    };
 
     if let Some(p) = override_path {
         let p = p.trim().trim_matches('"');
         if !p.is_empty() {
-            add(PathBuf::from(p));
+            push_existing(&mut out, &mut seen, PathBuf::from(p));
         }
     }
     // Edge/Chrome ahead of the user's default, so a managed image keeps its
     // known-good browser even when a third-party app grabbed the default.
     for p in preferred_paths() {
-        add(p);
+        push_existing(&mut out, &mut seen, p);
     }
     if let Some(p) = default_browser() {
-        add(PathBuf::from(p));
+        push_existing(&mut out, &mut seen, PathBuf::from(p));
     }
     for p in known_paths() {
-        add(p);
+        push_existing(&mut out, &mut seen, p);
     }
     for p in app_paths() {
-        add(PathBuf::from(p));
+        push_existing(&mut out, &mut seen, PathBuf::from(p));
     }
     out
+}
+
+/// Appends `p` when it is an existing file not already present (case-insensitive
+/// on the path, matching Windows' case-insensitive filesystem).
+fn push_existing(out: &mut Vec<String>, seen: &mut HashSet<String>, p: PathBuf) {
+    if !p.is_file() {
+        return;
+    }
+    let key = p.to_string_lossy().to_lowercase();
+    if seen.insert(key) {
+        out.push(p.to_string_lossy().into_owned());
+    }
 }
 
 /// The executable of the current default browser. Returned regardless of its
@@ -252,4 +272,45 @@ fn assoc_executable(ext: &str) -> Option<String> {
 
 fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Creates a real file so `push_existing`'s `is_file` check passes.
+    fn touch(dir: &std::path::Path, name: &str) -> PathBuf {
+        let p = dir.join(name);
+        std::fs::write(&p, b"x").unwrap();
+        p
+    }
+
+    #[test]
+    fn push_existing_keeps_only_files_and_dedups_case_insensitively() {
+        let dir = std::env::temp_dir().join("browserhost-discovery-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let a = touch(&dir, "Edge.exe");
+        let missing = dir.join("Nope.exe");
+
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+        push_existing(&mut out, &mut seen, a.clone());
+        push_existing(&mut out, &mut seen, a.clone()); // duplicate path
+        push_existing(&mut out, &mut seen, a.with_file_name("edge.EXE")); // same file, different case
+        push_existing(&mut out, &mut seen, missing); // does not exist
+
+        assert_eq!(out.len(), 1, "duplicates and missing files are dropped");
+        assert!(out[0].to_lowercase().ends_with("edge.exe"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn no_browser_error_is_detectable_by_the_host() {
+        let e = no_browser_error();
+        assert!(is_no_browser(&e));
+        assert!(!is_no_browser(&anyhow::anyhow!("something else")));
+    }
 }

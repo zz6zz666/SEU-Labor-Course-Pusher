@@ -24,6 +24,35 @@ pub struct StoredCookie {
     pub http_only: bool,
 }
 
+impl StoredCookie {
+    /// Borrow as the browser engine's cookie shape, for CDP injection.
+    pub fn to_browser_cookie(&self) -> browserhost::Cookie {
+        browserhost::Cookie {
+            name: self.name.clone(),
+            value: self.value.clone(),
+            domain: self.domain.clone(),
+            path: self.path.clone(),
+            expires: self.expires,
+            secure: self.secure,
+            http_only: self.http_only,
+        }
+    }
+}
+
+impl From<browserhost::Cookie> for StoredCookie {
+    fn from(c: browserhost::Cookie) -> Self {
+        StoredCookie {
+            name: c.name,
+            value: c.value,
+            domain: c.domain,
+            path: c.path,
+            expires: c.expires,
+            secure: c.secure,
+            http_only: c.http_only,
+        }
+    }
+}
+
 pub struct Jar {
     mu: Mutex<Vec<StoredCookie>>,
     path: Option<PathBuf>,
@@ -137,12 +166,7 @@ impl Jar {
                 .cmp(&b.domain)
                 .then_with(|| a.name.cmp(&b.name))
         });
-        let mut raw = serde_json::to_string_pretty(&*guard)?;
-        raw.push('\n');
-        let tmp = PathBuf::from(format!("{}.tmp", path.display()));
-        std::fs::write(&tmp, raw)?;
-        std::fs::rename(&tmp, path)?;
-        Ok(())
+        crate::fsutil::atomic_write_json(path, &*guard)
     }
 }
 

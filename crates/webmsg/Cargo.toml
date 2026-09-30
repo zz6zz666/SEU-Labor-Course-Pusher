@@ -1,0 +1,14 @@
+[package]
+name = "webmsg"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Loopback HTTP bridge that exposes a host API to a hosted web page"
+keywords = ["bridge", "http", "ipc", "webview", "webview2"]
+categories = ["web-programming"]
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true

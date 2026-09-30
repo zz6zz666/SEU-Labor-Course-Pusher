@@ -1,20 +1,23 @@
 //! Drives the system Chromium browser through CDP. It never bundles an engine:
-//! the executable is Edge/Chrome that is already installed.
+//! the executable is Edge/Chrome (or any Chromium fork) that is already
+//! installed.
 
+use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::Child;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
-use tungstenite::{connect, Message, WebSocket};
 use tungstenite::stream::MaybeTlsStream;
-use std::net::TcpStream;
+use tungstenite::{connect, Message, WebSocket};
 
-use super::{discovery, Browser};
-use crate::session::jar::StoredCookie;
+use crate::cookie::Cookie;
+use crate::discovery;
 
-pub struct Chrome {
+/// A live browser process bound to a dedicated profile, with a CDP socket to a
+/// page target.
+pub struct Session {
     child: Child,
     ws: WebSocket<MaybeTlsStream<TcpStream>>,
     next_id: i64,
@@ -31,21 +34,33 @@ pub enum WindowMode {
     AppFramed { width: i32, height: i32 },
 }
 
-impl Chrome {
-    pub fn launch(
-        visible: bool,
-        profile_dir: &str,
-        url: Option<&str>,
-        mode: WindowMode,
-        exec_path: Option<&str>,
-    ) -> Result<Chrome> {
-        let candidates = discovery::candidates(exec_path);
+/// Everything needed to launch one session.
+pub struct SessionConfig {
+    /// Show a window; when false the browser runs headless.
+    pub visible: bool,
+    /// Dedicated user-data directory. Empty uses the browser's default profile.
+    pub profile_dir: String,
+    /// Page to open; `None` opens the browser's own startup surface.
+    pub url: Option<String>,
+    /// How the window should be presented.
+    pub mode: WindowMode,
+    /// Explicit browser executable; `None` auto-discovers one.
+    pub exec_path: Option<String>,
+    /// Display name for the profile in the browser's profile picker. Empty
+    /// leaves any existing name untouched.
+    pub profile_name: String,
+}
+
+impl Session {
+    /// Locates a browser and launches it with `cfg`.
+    pub fn launch(cfg: SessionConfig) -> Result<Session> {
+        let candidates = discovery::candidates(cfg.exec_path.as_deref());
         if candidates.is_empty() {
             return Err(discovery::no_browser_error());
         }
         let mut last: Option<anyhow::Error> = None;
         for exe in &candidates {
-            match Self::launch_one(exe, visible, profile_dir, url, mode) {
+            match Self::launch_one(exe, &cfg) {
                 Ok(c) => return Ok(c),
                 Err(e) => last = Some(anyhow!("{} ({})", e, exe)),
             }
@@ -53,22 +68,18 @@ impl Chrome {
         Err(last.unwrap_or_else(discovery::no_browser_error))
     }
 
-    fn launch_one(
-        exe: &str,
-        visible: bool,
-        profile_dir: &str,
-        url: Option<&str>,
-        mode: WindowMode,
-    ) -> Result<Chrome> {
+    fn launch_one(exe: &str, cfg: &SessionConfig) -> Result<Session> {
+        let profile_dir = cfg.profile_dir.as_str();
+        let url = cfg.url.as_deref();
         // Free our profile from any lingering instance (which would otherwise
         // make Chromium hand the command line off and exit without a port), then
         // clean it in place so no "restore pages" bubble appears.
         if !profile_dir.is_empty() {
-            super::winproc::kill_browsers_for_profile(profile_dir);
-            prepare_profile(profile_dir)?;
+            crate::winproc::kill_for_profile(profile_dir);
+            prepare_profile(profile_dir, &cfg.profile_name)?;
         }
 
-        let mut cmd = crate::osutil::command(exe);
+        let mut cmd = command(exe);
         cmd.arg("--remote-debugging-port=0")
             .arg("--no-first-run")
             .arg("--no-default-browser-check")
@@ -98,14 +109,14 @@ impl Chrome {
             .arg("--hide-crash-restore-bubble")
             .arg("--disable-session-crashed-bubble")
             .arg("--disable-features=Translate,AutofillServerCommunication,InfiniteSessionRestore,CalculateNativeWinOcclusion");
-        if !visible {
+        if !cfg.visible {
             cmd.arg("--headless=new");
         }
         if !profile_dir.is_empty() {
             cmd.arg(format!("--user-data-dir={}", profile_dir));
         }
         if let Some(url) = url {
-            match mode {
+            match cfg.mode {
                 WindowMode::App => {
                     cmd.arg("--start-maximized");
                     cmd.arg(format!("--app={}", url));
@@ -123,7 +134,7 @@ impl Chrome {
 
         let mut child = cmd
             .spawn()
-            .with_context(|| format!("无法启动浏览器: {}", exe))?;
+            .with_context(|| format!("failed to launch browser: {}", exe))?;
 
         let port = match wait_for_devtools_port(&mut child, profile_dir) {
             Ok(p) => p,
@@ -133,7 +144,7 @@ impl Chrome {
                 return Err(e);
             }
         };
-        let ws_url = match wait_for_page_target(port, url) {
+        let ws_url = match wait_for_page_target(port, cfg.url.as_deref()) {
             Ok(u) => u,
             Err(e) => {
                 let _ = child.kill();
@@ -146,11 +157,11 @@ impl Chrome {
             Err(e) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(anyhow!("无法连接浏览器调试端口: {}", e));
+                return Err(anyhow!("failed to connect to the browser debugging port: {}", e));
             }
         };
         apply_timeouts(&ws);
-        Ok(Chrome {
+        Ok(Session {
             child,
             ws,
             next_id: 1,
@@ -169,41 +180,8 @@ impl Chrome {
         Ok(())
     }
 
-    fn call(&mut self, method: &str, params: Value) -> Result<Value> {
-        let id = self.next_id;
-        self.next_id += 1;
-        let msg = json!({ "id": id, "method": method, "params": params });
-        self.ws
-            .send(Message::text(msg.to_string()))
-            .context("CDP 发送失败")?;
-        loop {
-            let raw = self.ws.read().context("CDP 读取失败")?;
-            let text = match raw {
-                Message::Text(t) => t.as_str().to_string(),
-                Message::Binary(b) => String::from_utf8_lossy(&b).into_owned(),
-                Message::Ping(p) => {
-                    let _ = self.ws.send(Message::Pong(p));
-                    continue;
-                }
-                Message::Close(_) => return Err(anyhow!("CDP 连接已关闭")),
-                _ => continue,
-            };
-            let v: Value = match serde_json::from_str(&text) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            if v.get("id").and_then(|x| x.as_i64()) == Some(id) {
-                if let Some(err) = v.get("error") {
-                    return Err(anyhow!("CDP {} 失败: {}", method, err));
-                }
-                return Ok(v.get("result").cloned().unwrap_or(Value::Null));
-            }
-        }
-    }
-}
-
-impl Browser for Chrome {
-    fn eval(&mut self, script: &str) -> Result<Value> {
+    /// Runs script in the page context and decodes its JSON result.
+    pub fn eval(&mut self, script: &str) -> Result<Value> {
         let r = self.call(
             "Runtime.evaluate",
             json!({
@@ -213,7 +191,7 @@ impl Browser for Chrome {
             }),
         )?;
         if let Some(exc) = r.get("exceptionDetails") {
-            return Err(anyhow!("脚本执行异常: {}", exc));
+            return Err(anyhow!("script threw: {}", exc));
         }
         Ok(r.get("result")
             .and_then(|x| x.get("value"))
@@ -221,35 +199,15 @@ impl Browser for Chrome {
             .unwrap_or(Value::Null))
     }
 
-    fn all_cookies(&mut self) -> Result<Vec<StoredCookie>> {
+    /// Returns every cookie in the profile, including session cookies.
+    pub fn cookies(&mut self) -> Result<Vec<Cookie>> {
         let r = self.call("Storage.getCookies", json!({}))?;
-        let arr = r
-            .get("cookies")
-            .and_then(|x| x.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let mut out = Vec::with_capacity(arr.len());
-        for c in arr {
-            let session = c.get("session").and_then(|x| x.as_bool()).unwrap_or(false);
-            let expires_raw = c.get("expires").and_then(|x| x.as_f64()).unwrap_or(-1.0);
-            out.push(StoredCookie {
-                name: str_field(&c, "name"),
-                value: str_field(&c, "value"),
-                domain: str_field(&c, "domain"),
-                path: str_field(&c, "path"),
-                expires: if session || expires_raw <= 0.0 {
-                    0
-                } else {
-                    expires_raw as i64
-                },
-                secure: c.get("secure").and_then(|x| x.as_bool()).unwrap_or(false),
-                http_only: c.get("httpOnly").and_then(|x| x.as_bool()).unwrap_or(false),
-            });
-        }
-        Ok(out)
+        Ok(cookies_from_cdp(&r))
     }
 
-    fn set_cookies(&mut self, cookies: &[StoredCookie]) -> Result<()> {
+    /// Injects cookies into the profile. Required before navigating: session
+    /// cookies are not retained in the on-disk profile.
+    pub fn set_cookies(&mut self, cookies: &[Cookie]) -> Result<()> {
         let arr: Vec<Value> = cookies
             .iter()
             .map(|c| {
@@ -271,7 +229,7 @@ impl Browser for Chrome {
         Ok(())
     }
 
-    fn close(&mut self) {
+    pub fn close(&mut self) {
         // Ask the browser to shut down cleanly so the profile is not flagged as
         // crashed. Native only: no taskkill, no console window.
         let _ = self.call("Browser.close", json!({}));
@@ -284,6 +242,49 @@ impl Browser for Chrome {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+
+    fn call(&mut self, method: &str, params: Value) -> Result<Value> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let msg = json!({ "id": id, "method": method, "params": params });
+        self.ws
+            .send(Message::text(msg.to_string()))
+            .context("CDP send failed")?;
+        loop {
+            let raw = self.ws.read().context("CDP receive failed")?;
+            let text = match raw {
+                Message::Text(t) => t.as_str().to_string(),
+                Message::Binary(b) => String::from_utf8_lossy(&b).into_owned(),
+                Message::Ping(p) => {
+                    let _ = self.ws.send(Message::Pong(p));
+                    continue;
+                }
+                Message::Close(_) => return Err(anyhow!("CDP connection closed")),
+                _ => continue,
+            };
+            let v: Value = match serde_json::from_str(&text) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            if v.get("id").and_then(|x| x.as_i64()) == Some(id) {
+                if let Some(err) = v.get("error") {
+                    return Err(anyhow!("CDP {} failed: {}", method, err));
+                }
+                return Ok(v.get("result").cloned().unwrap_or(Value::Null));
+            }
+        }
+    }
+}
+
+/// Builds a `Command` that never flashes a console window.
+fn command(program: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd
 }
 
 /// Bounds the debug socket so a dead peer surfaces as an error instead of
@@ -310,6 +311,33 @@ fn str_field(v: &Value, key: &str) -> String {
         .to_string()
 }
 
+/// Maps a `Storage.getCookies` result into [`Cookie`]s. Session cookies
+/// (expiry `-1`/`0`) become `expires == 0`.
+fn cookies_from_cdp(result: &Value) -> Vec<Cookie> {
+    match result.get("cookies").and_then(|x| x.as_array()) {
+        Some(arr) => arr.iter().map(cookie_from_cdp).collect(),
+        None => Vec::new(),
+    }
+}
+
+fn cookie_from_cdp(c: &Value) -> Cookie {
+    let session = c.get("session").and_then(|x| x.as_bool()).unwrap_or(false);
+    let expires_raw = c.get("expires").and_then(|x| x.as_f64()).unwrap_or(-1.0);
+    Cookie {
+        name: str_field(c, "name"),
+        value: str_field(c, "value"),
+        domain: str_field(c, "domain"),
+        path: str_field(c, "path"),
+        expires: if session || expires_raw <= 0.0 {
+            0
+        } else {
+            expires_raw as i64
+        },
+        secure: c.get("secure").and_then(|x| x.as_bool()).unwrap_or(false),
+        http_only: c.get("httpOnly").and_then(|x| x.as_bool()).unwrap_or(false),
+    }
+}
+
 fn wait_for_devtools_port(child: &mut Child, profile_dir: &str) -> Result<u16> {
     let path = PathBuf::from(profile_dir).join("DevToolsActivePort");
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -327,12 +355,12 @@ fn wait_for_devtools_port(child: &mut Child, profile_dir: &str) -> Result<u16> {
         // instance: fail fast instead of waiting out the timeout.
         if let Ok(Some(status)) = child.try_wait() {
             return Err(anyhow!(
-                "浏览器进程提前退出({}),可能有同配置的浏览器实例在运行",
+                "browser process exited early ({}); another instance may be using the same profile",
                 status
             ));
         }
         if Instant::now() > deadline {
-            return Err(anyhow!("等待浏览器调试端口超时"));
+            return Err(anyhow!("timed out waiting for the browser debugging port"));
         }
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -379,15 +407,16 @@ fn wait_for_page_target(port: u16, app_url: Option<&str>) -> Result<String> {
             }
         }
         if Instant::now() > deadline {
-            return Err(anyhow!("等待浏览器页面就绪超时"));
+            return Err(anyhow!("timed out waiting for the browser page to become ready"));
         }
         std::thread::sleep(Duration::from_millis(150));
     }
 }
 
-/// Ensures the user-data directory exists and carries a display name, so the
-/// browser does not label our profile as "unSpecified".
-fn prepare_profile(dir: &str) -> Result<()> {
+/// Ensures the user-data directory exists and, when `display_name` is set,
+/// carries it as the profile's name so the browser does not label our profile
+/// as "unSpecified".
+fn prepare_profile(dir: &str, display_name: &str) -> Result<()> {
     std::fs::create_dir_all(dir)?;
     // Drop stale state so a fresh launch is not misled: singleton locks from a
     // killed background instance, and a `DevToolsActivePort` left by a previous
@@ -421,8 +450,8 @@ fn prepare_profile(dir: &str) -> Result<()> {
         .and_then(|v| v.as_str())
         .map(|s| !s.is_empty())
         .unwrap_or(false);
-    if !has_name {
-        def["name"] = json!("SEU劳动教育助手");
+    if !has_name && !display_name.is_empty() {
+        def["name"] = json!(display_name);
     }
     if profile.get("last_used").is_none() {
         profile["last_used"] = json!("Default");
@@ -469,5 +498,43 @@ fn sanitize_preferences(dir: &str) {
         if std::fs::write(&tmp, out).is_ok() {
             let _ = std::fs::rename(&tmp, &path);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_cdp_cookies_including_session_and_expiring() {
+        let result = json!({
+            "cookies": [
+                {
+                    "name": "SID", "value": "abc", "domain": ".seu.edu.cn",
+                    "path": "/", "session": true, "expires": -1.0,
+                    "secure": true, "httpOnly": true
+                },
+                {
+                    "name": "T", "value": "xyz", "domain": "labor.seu.edu.cn",
+                    "path": "/app", "expires": 1_900_000_000.0_f64,
+                    "secure": false, "httpOnly": false
+                }
+            ]
+        });
+        let cookies = cookies_from_cdp(&result);
+        assert_eq!(cookies.len(), 2);
+
+        assert_eq!(cookies[0].name, "SID");
+        assert_eq!(cookies[0].expires, 0, "session cookie becomes 0");
+        assert!(cookies[0].secure && cookies[0].http_only);
+
+        assert_eq!(cookies[1].expires, 1_900_000_000);
+        assert_eq!(cookies[1].path, "/app");
+    }
+
+    #[test]
+    fn missing_or_malformed_cookies_yield_empty() {
+        assert!(cookies_from_cdp(&json!({})).is_empty());
+        assert!(cookies_from_cdp(&json!({ "cookies": "no" })).is_empty());
     }
 }

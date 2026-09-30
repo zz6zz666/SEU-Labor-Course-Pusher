@@ -1,0 +1,16 @@
+[package]
+name = "winkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Small generic Win32 helpers: display scale and window-icon loading"
+keywords = ["windows", "win32", "dpi", "icon"]
+categories = ["gui"]
+
+[dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_HiDpi",
+] }

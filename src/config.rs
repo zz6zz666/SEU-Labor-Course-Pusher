@@ -244,7 +244,7 @@ pub struct Store {
 fn write_file(path: &Path, cfg: &Config) -> std::io::Result<()> {
     let mut raw = serde_json::to_string_pretty(cfg).unwrap_or_default();
     raw.push('\n');
-    std::fs::write(path, raw)
+    crate::fsutil::atomic_write(path, raw.as_bytes())
 }
 
 impl Store {

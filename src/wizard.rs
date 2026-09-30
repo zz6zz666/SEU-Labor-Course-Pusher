@@ -1,17 +1,16 @@
-//! Serves the settings page over loopback HTTP. A native WebView2 window (see
-//! `appwindow`) renders the page, and its `window.seuWizard` API is backed by
-//! `/api/*` endpoints, so the original wizard.html is reused unchanged.
+//! The settings model and the bridge wiring for the hosted settings page.
+//!
+//! The page itself is served and driven by `webmsg`; this module only declares
+//! the host's action table and maps the page's messages onto it, so no
+//! transport or HTTP details live here.
 
-use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::Serialize;
 
-use crate::logging::Logger;
+use crate::assets;
+use crate::brand;
 use crate::web;
 
 #[derive(Serialize, Default)]
@@ -46,8 +45,6 @@ pub struct ConfigView {
     pub category_blacklist: Vec<String>,
 }
 
-type Callback = Box<dyn Fn() + Send + Sync>;
-
 pub struct Actions {
     pub status: Box<dyn Fn() -> Status + Send + Sync>,
     pub config: Box<dyn Fn() -> ConfigView + Send + Sync>,
@@ -56,211 +53,95 @@ pub struct Actions {
     pub save_filters: Box<dyn Fn(&[String], &[String]) -> Result<()> + Send + Sync>,
     pub save_notify: Box<dyn Fn(&str, bool, bool) -> Result<()> + Send + Sync>,
     pub set_behavior: Box<dyn Fn(Option<bool>, Option<bool>) -> Result<()> + Send + Sync>,
-    pub open_login: Callback,
-    pub open_course: Callback,
-    pub open_config: Callback,
-    pub open_logs: Callback,
+    pub open_login: Box<dyn Fn() + Send + Sync>,
+    pub open_course: Box<dyn Fn() + Send + Sync>,
+    pub open_config: Box<dyn Fn() + Send + Sync>,
+    pub open_logs: Box<dyn Fn() + Send + Sync>,
     pub open_external: Box<dyn Fn(&str) -> Result<()> + Send + Sync>,
 }
 
-pub struct Server {
-    addr: SocketAddr,
-    actions: Actions,
-    log: Logger,
-    stop: AtomicBool,
-    on_close: Mutex<Option<Callback>>,
+/// Starts the loopback settings bridge. It opens no window itself; a surface
+/// (WebView2 or a borrowed browser) loads the returned URL.
+pub fn open(actions: Actions) -> Result<Arc<webmsg::Server>> {
+    let a = Arc::new(actions);
+    let handler: webmsg::Handler = Arc::new(move |name, data| dispatch(&a, name, data));
+    webmsg::serve(
+        webmsg::Config {
+            // Keep the page's original `window.seuWizard` namespace.
+            namespace: "seuWizard".to_string(),
+            title: brand::TITLE.to_string(),
+            index_html: web::WIZARD_HTML.to_string(),
+            icon_ico: assets::ICON_ICO,
+            extra_csp: "connect-src 'self'; img-src 'self' data:;",
+        },
+        handler,
+    )
 }
 
-/// Starts the loopback settings API. It does not open any window itself: the
-/// native WebView2 window consumes these endpoints.
-pub fn open(actions: Actions, log: Logger) -> Result<Arc<Server>> {
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let addr = listener.local_addr()?;
-    let server = Arc::new(Server {
-        addr,
-        actions,
-        log,
-        stop: AtomicBool::new(false),
-        on_close: Mutex::new(None),
-    });
-
-    let accept_server = server.clone();
-    std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            if accept_server.stop.load(Ordering::SeqCst) {
-                break;
-            }
-            let Ok(stream) = stream else { continue };
-            let conn_server = accept_server.clone();
-            std::thread::spawn(move || {
-                let _ = handle_conn(&conn_server, stream);
-            });
-        }
-    });
-
-    Ok(server)
-}
-
-impl Server {
-    pub fn url(&self) -> String {
-        format!("http://{}/", self.addr)
-    }
-
-    /// Registers a callback fired exactly once when the server closes.
-    pub fn set_on_close(&self, f: Callback) {
-        *self.on_close.lock().unwrap() = Some(f);
-    }
-
-    pub fn close(&self) {
-        if self.stop.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        // Unblock the accept loop.
-        let _ = TcpStream::connect_timeout(&self.addr, Duration::from_millis(200));
-        let cb = self.on_close.lock().unwrap().take();
-        if let Some(cb) = cb {
-            cb();
-        }
-    }
-}
-
-fn handle_conn(server: &Arc<Server>, mut stream: TcpStream) -> Result<()> {
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-    let mut buf = Vec::new();
-    let mut tmp = [0u8; 4096];
-    let header_end;
-    loop {
-        let n = stream.read(&mut tmp)?;
-        if n == 0 {
-            return Ok(());
-        }
-        buf.extend_from_slice(&tmp[..n]);
-        if let Some(pos) = find_subsequence(&buf, b"\r\n\r\n") {
-            header_end = pos + 4;
-            break;
-        }
-        if buf.len() > 1 << 20 {
-            return Ok(());
-        }
-    }
-
-    let header_text = String::from_utf8_lossy(&buf[..header_end]).into_owned();
-    let mut lines = header_text.split("\r\n");
-    let request_line = lines.next().unwrap_or("");
-    let mut parts = request_line.split_whitespace();
-    let method = parts.next().unwrap_or("").to_string();
-    let path = parts.next().unwrap_or("/").to_string();
-
-    let mut content_length = 0usize;
-    for line in lines {
-        if let Some((k, v)) = line.split_once(':') {
-            if k.eq_ignore_ascii_case("content-length") {
-                content_length = v.trim().parse().unwrap_or(0);
-            }
-        }
-    }
-
-    let mut body = buf[header_end..].to_vec();
-    while body.len() < content_length {
-        let n = stream.read(&mut tmp)?;
-        if n == 0 {
-            break;
-        }
-        body.extend_from_slice(&tmp[..n]);
-    }
-    let body = String::from_utf8_lossy(&body).into_owned();
-
-    let response: Vec<u8> = if method == "GET" && path == "/favicon.ico" {
-        favicon_response()
-    } else {
-        route(server, &method, &path, &body).into_bytes()
-    };
-    stream.write_all(&response)?;
-    stream.flush()?;
-    Ok(())
-}
-
-fn route(server: &Arc<Server>, method: &str, path: &str, body: &str) -> String {
-    let a = &server.actions;
-    match (method, path) {
-        ("GET", "/") => html_response(&page()),
-        ("GET", "/api/status") => json_ok(&(a.status)()),
-        ("GET", "/api/config") => json_ok(&(a.config)()),
-        ("POST", "/api/verify") => {
+fn dispatch(a: &Arc<Actions>, name: &str, data: serde_json::Value) -> Result<serde_json::Value> {
+    match name {
+        "getStatus" => Ok(serde_json::to_value((a.status)())?),
+        "getConfig" => Ok(serde_json::to_value((a.config)())?),
+        "verify" => {
             let (state, reason) = (a.verify)();
-            json_ok(&serde_json::json!({ "state": state, "reason": reason }))
+            Ok(serde_json::json!({ "state": state, "reason": reason }))
         }
-        ("POST", "/api/save-account") => {
-            let v = parse_body(body);
-            result_response((a.save_account)(&str_of(&v, "username"), &str_of(&v, "password")))
-        }
-        ("POST", "/api/save-filters") => {
-            let v = parse_body(body);
-            result_response((a.save_filters)(
-                &arr_of(&v, "locationWhitelist"),
-                &arr_of(&v, "categoryBlacklist"),
-            ))
-        }
-        ("POST", "/api/save-notify") => {
-            let v = parse_body(body);
-            let token = str_of(&v, "pushplusToken");
-            let pp = v
+        "saveAccount" => Ok(result_json((a.save_account)(
+            &str_of(&data, "username"),
+            &str_of(&data, "password"),
+        ))),
+        "saveFilters" => Ok(result_json((a.save_filters)(
+            &arr_of(&data, "locationWhitelist"),
+            &arr_of(&data, "categoryBlacklist"),
+        ))),
+        "saveNotify" => {
+            let token = str_of(&data, "pushplusToken");
+            let pp = data
                 .get("pushplusEnabled")
                 .and_then(|x| x.as_bool())
                 .unwrap_or(false);
-            let wn = v
+            let wn = data
                 .get("windowsNotifyEnabled")
                 .and_then(|x| x.as_bool())
                 .unwrap_or(false);
-            result_response((a.save_notify)(&token, pp, wn))
+            Ok(result_json((a.save_notify)(&token, pp, wn)))
         }
-        ("POST", "/api/set-behavior") => {
-            let v = parse_body(body);
-            let auto_start = v.get("autoStart").and_then(|x| x.as_bool());
-            let auto_select = v.get("autoSelect").and_then(|x| x.as_bool());
-            result_response((a.set_behavior)(auto_start, auto_select))
+        "setBehavior" => {
+            let auto_start = data.get("autoStart").and_then(|x| x.as_bool());
+            let auto_select = data.get("autoSelect").and_then(|x| x.as_bool());
+            Ok(result_json((a.set_behavior)(auto_start, auto_select)))
         }
-        ("POST", "/api/open-login") => {
+        "openLogin" => {
             (a.open_login)();
-            json_ok(&serde_json::json!({ "ok": true }))
+            Ok(serde_json::json!({ "ok": true }))
         }
-        ("POST", "/api/open-course") => {
+        "openCourse" => {
             (a.open_course)();
-            json_ok(&serde_json::json!({ "ok": true }))
+            Ok(serde_json::json!({ "ok": true }))
         }
-        ("POST", "/api/open-config") => {
+        "openConfig" => {
             (a.open_config)();
-            json_ok(&serde_json::json!({ "ok": true }))
+            Ok(serde_json::json!({ "ok": true }))
         }
-        ("POST", "/api/open-logs") => {
+        "openLogs" => {
             (a.open_logs)();
-            json_ok(&serde_json::json!({ "ok": true }))
+            Ok(serde_json::json!({ "ok": true }))
         }
-        ("POST", "/api/open-external") => {
-            let v = parse_body(body);
-            result_response((a.open_external)(&str_of(&v, "url")))
+        "openExternal" => {
+            let url = data.as_str().unwrap_or("");
+            Ok(result_json((a.open_external)(url)))
         }
-        ("POST", "/api/close") => {
-            let srv = server.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(150));
-                srv.close();
-            });
-            json_ok(&serde_json::json!({ "ok": true }))
-        }
-        _ => {
-            let _ = &server.log;
-            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string()
-        }
+        other => Err(anyhow!("未知的设置请求: {}", other)),
     }
 }
 
-fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|w| w == needle)
-}
-
-fn parse_body(body: &str) -> serde_json::Value {
-    serde_json::from_str(body).unwrap_or(serde_json::Value::Null)
+/// Business errors travel as data (`{ok:false,error}`) so the page's
+/// `if (!res.ok)` check sees them instead of the call throwing.
+fn result_json(r: Result<()>) -> serde_json::Value {
+    match r {
+        Ok(()) => serde_json::json!({ "ok": true }),
+        Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
+    }
 }
 
 fn str_of(v: &serde_json::Value, key: &str) -> String {
@@ -280,98 +161,3 @@ fn arr_of(v: &serde_json::Value, key: &str) -> Vec<String> {
         })
         .unwrap_or_default()
 }
-
-fn json_ok<T: Serialize>(v: &T) -> String {
-    let body = serde_json::to_string(v).unwrap_or_else(|_| "null".to_string());
-    json_response(&body)
-}
-
-fn json_response(body: &str) -> String {
-    format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
-    )
-}
-
-fn html_response(body: &str) -> String {
-    format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
-    )
-}
-
-/// Serves the app icon so a browser-hosted settings window shows our icon in
-/// its title bar and taskbar instead of the hosting browser's own.
-fn favicon_response() -> Vec<u8> {
-    let icon = crate::assets::ICON_ICO;
-    let mut out = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: image/x-icon\r\nContent-Length: {}\r\nCache-Control: max-age=86400\r\nConnection: close\r\n\r\n",
-        icon.len()
-    )
-    .into_bytes();
-    out.extend_from_slice(icon);
-    out
-}
-
-fn result_response(res: Result<()>) -> String {
-    match res {
-        Ok(()) => json_ok(&serde_json::json!({ "ok": true })),
-        Err(e) => {
-            let body = serde_json::json!({ "ok": false, "error": e.to_string() }).to_string();
-            format!(
-                "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            )
-        }
-    }
-}
-
-fn page() -> String {
-    let page = web::WIZARD_HTML.replace(CSP_ORIGINAL, CSP_PATCHED);
-    // A browser-hosted settings window takes its caption from document.title,
-    // so drive it from the same constant the native window uses.
-    let title = crate::brand::TITLE.replace('\\', "\\\\").replace('"', "\\\"");
-    let head = format!(
-        "<head>\n<script>document.title = \"{}\";</script>\n{}",
-        title, SHIM
-    );
-    page.replacen("<head>", &head, 1)
-}
-
-const CSP_ORIGINAL: &str =
-    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';";
-const CSP_PATCHED: &str = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:;";
-
-const SHIM: &str = r#"<script>
-(function () {
-  async function call(path, body) {
-    const opt = { method: body === undefined ? 'GET' : 'POST', headers: {} };
-    if (body !== undefined) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
-    const res = await fetch(path, opt);
-    const text = await res.text();
-    let data = null;
-    try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
-    if (!res.ok) { throw new Error((data && data.error) || ('HTTP ' + res.status)); }
-    return data;
-  }
-  window.seuWizard = {
-    verify: () => call('/api/verify', {}),
-    getStatus: () => call('/api/status'),
-    getConfig: () => call('/api/config'),
-    saveAccount: (d) => call('/api/save-account', d),
-    saveFilters: (d) => call('/api/save-filters', d),
-    saveNotify: (d) => call('/api/save-notify', d),
-    setBehavior: (d) => call('/api/set-behavior', d),
-    openLogin: () => call('/api/open-login', {}),
-    openCourse: () => call('/api/open-course', {}),
-    openConfig: () => call('/api/open-config', {}),
-    openLogs: () => call('/api/open-logs', {}),
-    openExternal: (url) => call('/api/open-external', { url: url }),
-    close: () => call('/api/close', {})
-  };
-})();
-</script>
-"#;

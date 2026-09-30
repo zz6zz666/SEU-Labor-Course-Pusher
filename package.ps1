@@ -22,9 +22,13 @@ if (-not $iscc) {
 }
 
 Write-Host "==> compiling installer with $iscc"
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 & $iscc "/DMyAppVersion=$Version" (Join-Path $root "installer\seu-labor.iss")
-if ($LASTEXITCODE -ne 0) {
-    throw "Inno Setup 编译失败（退出码 $LASTEXITCODE）"
+$code = $LASTEXITCODE
+$ErrorActionPreference = $prevEap
+if ($code -ne 0) {
+    throw "Inno Setup 编译失败（退出码 $code）"
 }
 
 $setup = Join-Path $root "$Output\seu-labor-setup-$Version.exe"

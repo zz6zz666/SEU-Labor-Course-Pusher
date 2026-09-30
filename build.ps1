@@ -20,8 +20,14 @@ $env:SEU_LABOR_VERSION = $Version
 New-Item -ItemType Directory -Path $Output -Force | Out-Null
 
 Write-Host "==> cargo build --release"
+# cargo reports progress on stderr; don't let PowerShell turn that into a
+# terminating error under Stop. The exit code is the real signal.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 & $cargo build --release
-if ($LASTEXITCODE -ne 0) { throw "cargo build 失败(退出码 $LASTEXITCODE)" }
+$code = $LASTEXITCODE
+$ErrorActionPreference = $prevEap
+if ($code -ne 0) { throw "cargo build 失败(退出码 $code)" }
 
 Copy-Item "target\release\seu-labor.exe" (Join-Path $Output "seu-labor.exe") -Force
 Copy-Item "vendor\WebView2Loader.dll" (Join-Path $Output "WebView2Loader.dll") -Force

@@ -139,12 +139,7 @@ impl Store {
     }
 
     fn save_locked(&self, s: &State) -> anyhow::Result<()> {
-        let mut raw = serde_json::to_string_pretty(s)?;
-        raw.push('\n');
-        let tmp = PathBuf::from(format!("{}.tmp", self.path.display()));
-        std::fs::write(&tmp, raw)?;
-        std::fs::rename(&tmp, &self.path)?;
-        Ok(())
+        crate::fsutil::atomic_write_json(&self.path, s)
     }
 }
 

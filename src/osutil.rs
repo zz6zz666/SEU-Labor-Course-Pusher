@@ -1,12 +1,16 @@
 //! Opens files, folders and URLs with the shell, plus process-level Windows
 //! setup (DPI awareness, AppUserModelID).
 
+use std::io::Write;
 use std::process::Command;
 
 use anyhow::{anyhow, Result};
 use windows::core::PCWSTR;
+use windows::Win32::System::Console::{
+    AttachConsole, GetStdHandle, ATTACH_PARENT_PROCESS, STD_OUTPUT_HANDLE,
+};
 use windows::Win32::UI::HiDpi::{
-    GetDpiForSystem, SetProcessDpiAwareness, SetProcessDpiAwarenessContext,
+    SetProcessDpiAwareness, SetProcessDpiAwarenessContext,
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, PROCESS_DPI_AWARENESS,
 };
 use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
@@ -19,7 +23,7 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// Builds a `Command` that never flashes a console window. Every child process
 /// spawned from this GUI app must go through here, otherwise Windows briefly
 /// pops a black console window.
-pub fn command(program: &str) -> Command {
+pub fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     let mut cmd = Command::new(program);
     #[cfg(windows)]
     {
@@ -27,6 +31,30 @@ pub fn command(program: &str) -> Command {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
     cmd
+}
+
+/// Writes a line to the command line, for CLI flags like `-version`.
+///
+/// A GUI-subsystem (release) process started from a terminal has no stdout
+/// handle, so a plain `println!` would be invisible. When that is the case we
+/// attach to the parent console and write to `CONOUT$`; otherwise standard
+/// output (a console, a pipe or a redirected file) is used as usual.
+pub fn console_println(msg: &str) {
+    let has_stdout = matches!(
+        unsafe { GetStdHandle(STD_OUTPUT_HANDLE) },
+        Ok(h) if !h.is_invalid() && !h.0.is_null()
+    );
+    if !has_stdout {
+        unsafe {
+            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open("CONOUT$") {
+            let _ = f.write_all(msg.as_bytes());
+            let _ = f.write_all(b"\r\n");
+            return;
+        }
+    }
+    println!("{}", msg);
 }
 
 pub fn open_target(target: &str) -> Result<()> {
@@ -49,26 +77,18 @@ pub fn open_url(url: &str) -> Result<()> {
     open_target(url)
 }
 
-fn to_wide(s: &str) -> Vec<u16> {
+/// Encodes `s` as a NUL-terminated UTF-16 buffer, the form Win32 wide-string
+/// APIs expect.
+pub fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 /// Sets the process AppUserModelID, required for desktop toast notifications to
 /// be attributed to this app.
 pub fn set_app_user_model_id(id: &str) -> Result<()> {
-    let w = to_wide(id);
+    let w = wide(id);
     unsafe { SetCurrentProcessExplicitAppUserModelID(PCWSTR(w.as_ptr())) }
         .map_err(|e| anyhow!("设置 AppUserModelID 失败: {e}"))
-}
-
-/// Reports the primary display scale factor (1.0 == 96 DPI).
-pub fn dpi_scale() -> f64 {
-    let d = unsafe { GetDpiForSystem() };
-    if d >= 96 {
-        d as f64 / 96.0
-    } else {
-        1.0
-    }
 }
 
 /// Opts the process into Per-Monitor V2 DPI awareness so windows render crisply

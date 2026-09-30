@@ -1,0 +1,34 @@
+[package]
+name = "websurface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Multi-window web-UI host: WebView2 surfaces plus a borrowed-Chromium fallback"
+keywords = ["webview2", "chromium", "win32", "window", "gui"]
+categories = ["gui"]
+
+[dependencies]
+anyhow.workspace = true
+serde_json.workspace = true
+winkit = { path = "../winkit" }
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+] }
+webview2-com = { version = "0.37", optional = true }
+browserhost = { path = "../browserhost", optional = true }
+
+[features]
+default = ["webview2", "borrowed-browser"]
+webview2 = ["dep:webview2-com"]
+borrowed-browser = ["dep:browserhost"]
+
+[dev-dependencies]
+webmsg = { path = "../webmsg" }
