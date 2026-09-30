@@ -170,8 +170,12 @@ fn handle_conn(server: &Arc<Server>, mut stream: TcpStream) -> Result<()> {
     }
     let body = String::from_utf8_lossy(&body).into_owned();
 
-    let response = route(server, &method, &path, &body);
-    stream.write_all(response.as_bytes())?;
+    let response: Vec<u8> = if method == "GET" && path == "/favicon.ico" {
+        favicon_response()
+    } else {
+        route(server, &method, &path, &body).into_bytes()
+    };
+    stream.write_all(&response)?;
     stream.flush()?;
     Ok(())
 }
@@ -298,6 +302,19 @@ fn html_response(body: &str) -> String {
     )
 }
 
+/// Serves the app icon so a browser-hosted settings window shows our icon in
+/// its title bar and taskbar instead of the hosting browser's own.
+fn favicon_response() -> Vec<u8> {
+    let icon = crate::assets::ICON_ICO;
+    let mut out = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: image/x-icon\r\nContent-Length: {}\r\nCache-Control: max-age=86400\r\nConnection: close\r\n\r\n",
+        icon.len()
+    )
+    .into_bytes();
+    out.extend_from_slice(icon);
+    out
+}
+
 fn result_response(res: Result<()>) -> String {
     match res {
         Ok(()) => json_ok(&serde_json::json!({ "ok": true })),
@@ -314,7 +331,14 @@ fn result_response(res: Result<()>) -> String {
 
 fn page() -> String {
     let page = web::WIZARD_HTML.replace(CSP_ORIGINAL, CSP_PATCHED);
-    page.replacen("<head>", &format!("<head>\n{}", SHIM), 1)
+    // A browser-hosted settings window takes its caption from document.title,
+    // so drive it from the same constant the native window uses.
+    let title = crate::brand::TITLE.replace('\\', "\\\\").replace('"', "\\\"");
+    let head = format!(
+        "<head>\n<script>document.title = \"{}\";</script>\n{}",
+        title, SHIM
+    );
+    page.replacen("<head>", &head, 1)
 }
 
 const CSP_ORIGINAL: &str =

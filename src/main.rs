@@ -9,6 +9,7 @@
 mod appwindow;
 mod assets;
 mod autostart;
+mod brand;
 mod browser;
 mod config;
 mod logging;
@@ -55,7 +56,8 @@ fn main() {
     if has_flag(&args, "-wizard-ui") {
         let url = flag_value(&args, "-wiz-url").unwrap_or_default();
         let data = flag_value(&args, "-wiz-data").unwrap_or_default();
-        if let Err(e) = run_wizard_ui(&url, &data) {
+        let browser = flag_value(&args, "-wiz-browser").unwrap_or_default();
+        if let Err(e) = run_wizard_ui(&url, &data, &browser) {
             eprintln!("错误: {}", e);
             std::process::exit(1);
         }
@@ -432,7 +434,15 @@ fn open_course_view(app: &Arc<App>) {
 }
 
 fn open_wizard(app: &Arc<App>) {
-    // Tear down any existing wizard server + window process.
+    // Tear down any existing wizard server + window process. The profile also
+    // covers a window hosted by a borrowed browser (the no-WebView2 case).
+    let browser_profile = app
+        .p
+        .data_dir
+        .join("wizard-webview")
+        .join("browser")
+        .to_string_lossy()
+        .into_owned();
     {
         let mut wz = app.wizard.lock().unwrap();
         if let Some(p) = wz.proc.take() {
@@ -443,6 +453,7 @@ fn open_wizard(app: &Arc<App>) {
             srv.close();
         }
     }
+    browser::winproc::kill_browsers_for_profile(&browser_profile);
 
     let srv = match wizard::open(build_wizard_actions(app), logging::new("wizard")) {
         Ok(s) => s,
@@ -467,26 +478,37 @@ fn open_wizard(app: &Arc<App>) {
         .join("wizard-webview")
         .to_string_lossy()
         .into_owned();
-    let args = vec![
+    let mut args = vec![
         "-wizard-ui".to_string(),
         "-wiz-url".to_string(),
         srv.url(),
         "-wiz-data".to_string(),
         data,
     ];
+    // Let the settings window use the same explicit browser override as the
+    // course/login windows, when one is configured.
+    if let Some(bp) = app.store.get().browser_path() {
+        args.push("-wiz-browser".to_string());
+        args.push(bp.to_string());
+    }
 
     match proc::spawn(&exe, &args) {
         Ok(cp) => {
-            // The page's「关闭窗口」button closes the API server; also stop the child.
+            // The page's「关闭窗口」button closes the API server; also stop the
+            // child and any borrowed browser hosting the window.
             {
                 let app2 = app.clone();
+                let bp = browser_profile.clone();
                 srv.set_on_close(Box::new(move || {
                     let app = app2.clone();
+                    let bp = bp.clone();
                     std::thread::spawn(move || {
                         let mut wz = app.wizard.lock().unwrap();
                         if let Some(p) = wz.proc.take() {
                             p.kill();
                         }
+                        drop(wz);
+                        crate::browser::winproc::kill_browsers_for_profile(&bp);
                     });
                 }));
             }
@@ -767,7 +789,7 @@ fn run_login(
     Ok(())
 }
 
-fn run_wizard_ui(url: &str, data_path: &str) -> Result<()> {
+fn run_wizard_ui(url: &str, data_path: &str, browser: &str) -> Result<()> {
     let data = if data_path.is_empty() {
         std::env::temp_dir()
             .join("seu-labor-wizard-webview")
@@ -777,19 +799,61 @@ fn run_wizard_ui(url: &str, data_path: &str) -> Result<()> {
         data_path.to_string()
     };
     let url = if url.is_empty() { "about:blank" } else { url };
-    // The window is created in physical pixels, so scale the logical design
-    // dimensions by the display DPI (matching the previous implementation).
-    let scale = osutil::dpi_scale();
-    let dim = |v: i32| ((v as f64) * scale).round() as i32;
-    let opts = appwindow::Options {
-        title: "SEU 劳动教育课程推送助手 设置".to_string(),
-        width: dim(980),
-        height: dim(720),
-        min_width: dim(860),
-        min_height: dim(640),
-        data_path: data,
-    };
-    let win = appwindow::open(url, &opts)?;
-    win.run()?;
+
+    if wizard_uses_webview2() {
+        // The native window is sized in physical pixels, so scale the logical
+        // design dimensions by the display DPI.
+        let scale = osutil::dpi_scale();
+        let dim = |v: i32| ((v as f64) * scale).round() as i32;
+        let opts = appwindow::Options {
+            title: brand::TITLE.to_string(),
+            width: dim(brand::DESIGN_WIDTH),
+            height: dim(brand::DESIGN_HEIGHT),
+            min_width: dim(brand::MIN_WIDTH),
+            min_height: dim(brand::MIN_HEIGHT),
+            data_path: data,
+        };
+        let win = appwindow::open(url, &opts)?;
+        win.run()?;
+        return Ok(());
+    }
+
+    // No WebView2: borrow an installed Chromium and render the very same page in
+    // a chromeless app window, so the settings screen still shows up as a
+    // standalone native-looking window rather than a browser tab. Chromium's
+    // `--window-size` is in logical units, so the design size goes unscaled.
+    let profile = std::path::Path::new(&data)
+        .join("browser")
+        .to_string_lossy()
+        .into_owned();
+    let exec = (!browser.trim().is_empty()).then_some(browser);
+    let mut chrome = crate::browser::cdp::Chrome::launch(
+        true,
+        &profile,
+        Some(url),
+        crate::browser::cdp::WindowMode::AppFramed {
+            width: brand::DESIGN_WIDTH,
+            height: brand::DESIGN_HEIGHT,
+        },
+        exec,
+    )?;
+    while chrome.is_alive() {
+        std::thread::sleep(Duration::from_millis(400));
+    }
     Ok(())
+}
+
+/// Chooses the settings-window engine. `SEU_WIZARD_ENGINE=browser|webview`
+/// forces one for troubleshooting; otherwise WebView2 when present, else a
+/// borrowed Chromium.
+fn wizard_uses_webview2() -> bool {
+    match std::env::var("SEU_WIZARD_ENGINE")
+        .ok()
+        .as_deref()
+        .map(str::trim)
+    {
+        Some("browser") => false,
+        Some("webview") => true,
+        _ => appwindow::is_available(),
+    }
 }

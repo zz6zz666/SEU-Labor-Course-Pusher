@@ -14,8 +14,6 @@ use windows::Win32::System::Threading::{
     OpenProcess, TerminateProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
 };
 
-use super::discovery::is_browser_exe;
-
 #[link(name = "ntdll")]
 unsafe extern "system" {
     fn NtQueryInformationProcess(
@@ -37,6 +35,7 @@ pub fn kill_browsers_for_profile(dir: &str) {
     if needle.is_empty() {
         return;
     }
+    let me = std::process::id();
     unsafe {
         let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
             return;
@@ -48,11 +47,14 @@ pub fn kill_browsers_for_profile(dir: &str) {
         entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
         if Process32FirstW(snapshot, &mut entry).is_ok() {
             loop {
-                let name = wide_field(&entry.szExeFile).to_lowercase();
-                if is_browser_exe(&name) && entry.th32ProcessID != 0 {
-                    if let Some(cmd) = command_line(entry.th32ProcessID) {
+                let pid = entry.th32ProcessID;
+                // Match on the command line so any Chromium fork the user made
+                // default (not just the well-known names) is reaped, while never
+                // touching our own process.
+                if pid != 0 && pid != me {
+                    if let Some(cmd) = command_line(pid) {
                         if cmd.to_lowercase().contains(&needle) {
-                            terminate(entry.th32ProcessID);
+                            terminate(pid);
                         }
                     }
                 }
@@ -113,8 +115,3 @@ unsafe fn terminate(pid: u32) { unsafe {
         let _ = CloseHandle(handle);
     }
 }}
-
-fn wide_field(buf: &[u16]) -> String {
-    let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-    String::from_utf16_lossy(&buf[..end])
-}

@@ -18,9 +18,11 @@ use windows::Win32::System::Registry::{
 };
 use windows::Win32::UI::Shell::{AssocQueryStringW, ASSOCF_NONE, ASSOCSTR_EXECUTABLE};
 
-/// Executable names accepted as CDP-capable Chromium browsers. Electron shells
-/// (e.g. Tabbit, ZERO) are deliberately excluded: they ignore `--app` and
-/// `--remote-debugging-port`.
+/// Executable names of well-known Chromium browsers, used to find their usual
+/// install locations and App Paths. This is a heuristic for *locating* browsers,
+/// not a gate: a fork the user made their default (e.g. Tabbit, ZERO) is
+/// accepted, and whether a candidate really speaks CDP is settled at launch
+/// time by whether it opens a debug port.
 const CHROMIUM_EXES: &[&str] = &[
     "msedge.exe",
     "chrome.exe",
@@ -36,6 +38,10 @@ const CHROMIUM_EXES: &[&str] = &[
     "qqbrowser.exe",
 ];
 
+/// Browsers that do not speak CDP at all, so we skip them without a doomed
+/// launch. Everything else is tried and rejected only if it opens no debug port.
+const NON_CDP_EXES: &[&str] = &["firefox.exe", "iexplore.exe", "safari.exe"];
+
 /// The error shown when nothing usable was found.
 pub fn no_browser_error() -> anyhow::Error {
     anyhow!(
@@ -44,13 +50,9 @@ pub fn no_browser_error() -> anyhow::Error {
     )
 }
 
-/// Whether an executable name is a Chromium browser we can drive over CDP.
-pub fn is_browser_exe(name: &str) -> bool {
-    CHROMIUM_EXES.contains(&name.to_lowercase().as_str())
-}
-
 /// Returns usable browser executables in preference order: explicit override,
-/// the default browser, well-known install locations, then registry App Paths.
+/// Edge, Chrome, the user's default browser, other well-known install locations,
+/// then registry App Paths.
 pub fn candidates(override_path: Option<&str>) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -70,6 +72,11 @@ pub fn candidates(override_path: Option<&str>) -> Vec<String> {
             add(PathBuf::from(p));
         }
     }
+    // Edge/Chrome ahead of the user's default, so a managed image keeps its
+    // known-good browser even when a third-party app grabbed the default.
+    for p in preferred_paths() {
+        add(p);
+    }
     if let Some(p) = default_browser() {
         add(PathBuf::from(p));
     }
@@ -82,18 +89,21 @@ pub fn candidates(override_path: Option<&str>) -> Vec<String> {
     out
 }
 
-/// The executable of the current default browser, but only when it is a known
-/// Chromium build (so we never hand `--app` to Firefox or an Electron shell).
+/// The executable of the current default browser. Returned regardless of its
+/// vendor name so the user's own choice (e.g. a Chromium fork like Tabbit or
+/// ZERO) is tried first; only known non-CDP browsers are skipped outright, and
+/// anything else that cannot actually be driven is dropped by the launch probe.
 fn default_browser() -> Option<String> {
     let path = assoc_executable(".html")?;
     let name = PathBuf::from(&path)
         .file_name()
         .map(|s| s.to_string_lossy().to_lowercase())?;
-    CHROMIUM_EXES.contains(&name.as_str()).then_some(path)
+    (!NON_CDP_EXES.contains(&name.as_str())).then_some(path)
 }
 
-fn known_paths() -> Vec<PathBuf> {
-    let bases: Vec<String> = [
+/// Install-root prefixes we probe for well-known browsers.
+fn base_dirs() -> Vec<String> {
+    [
         std::env::var("LocalAppData").ok(),
         std::env::var("ProgramFiles").ok(),
         std::env::var("ProgramFiles(x86)").ok(),
@@ -101,11 +111,31 @@ fn known_paths() -> Vec<PathBuf> {
     .into_iter()
     .flatten()
     .filter(|s| !s.is_empty())
-    .collect();
+    .collect()
+}
 
-    // Vendor order: Edge first (present on every supported Windows), then
-    // Chrome and the other Chromium builds.
-    let rels = [
+fn paths_under(rels: &[&str]) -> Vec<PathBuf> {
+    let bases = base_dirs();
+    let mut out = Vec::new();
+    for rel in rels {
+        for base in &bases {
+            out.push(PathBuf::from(base).join(rel));
+        }
+    }
+    out
+}
+
+/// Edge and Chrome, always tried before a third-party default browser.
+fn preferred_paths() -> Vec<PathBuf> {
+    paths_under(&[
+        r"Microsoft\Edge\Application\msedge.exe",
+        r"Google\Chrome\Application\chrome.exe",
+    ])
+}
+
+fn known_paths() -> Vec<PathBuf> {
+    // Remaining Chromium builds, after Edge/Chrome above.
+    paths_under(&[
         r"Microsoft\Edge\Application\msedge.exe",
         r"Google\Chrome\Application\chrome.exe",
         r"BraveSoftware\Brave-Browser\Application\brave.exe",
@@ -118,14 +148,7 @@ fn known_paths() -> Vec<PathBuf> {
         r"360se6\Application\360se.exe",
         r"SogouExplorer\SogouExplorer.exe",
         r"Tencent\QQBrowser\QQBrowser.exe",
-    ];
-    let mut out = Vec::new();
-    for rel in rels {
-        for base in &bases {
-            out.push(PathBuf::from(base).join(rel));
-        }
-    }
-    out
+    ])
 }
 
 fn app_paths() -> Vec<String> {

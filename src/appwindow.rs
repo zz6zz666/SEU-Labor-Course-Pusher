@@ -13,10 +13,10 @@ use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use webview2_com::{
     CreateCoreWebView2ControllerCompletedHandler, CreateCoreWebView2EnvironmentCompletedHandler,
 };
-use windows::core::{w, PCWSTR};
+use windows::core::{w, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{E_POINTER, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi;
-use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+use windows::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -44,6 +44,19 @@ thread_local! {
 
 pub struct Window {
     hwnd: HWND,
+}
+
+/// Whether the machine has a usable WebView2 runtime. The version string the
+/// loader returns is released right away; only its presence matters here.
+pub fn is_available() -> bool {
+    let mut version = PWSTR::null();
+    let available = unsafe {
+        GetAvailableCoreWebView2BrowserVersionString(PCWSTR::null(), &mut version).is_ok()
+    };
+    if !version.is_null() {
+        unsafe { CoTaskMemFree(Some(version.0 as *const core::ffi::c_void)) };
+    }
+    available
 }
 
 /// Creates the window and starts loading `url`. Must be called on the same

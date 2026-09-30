@@ -23,10 +23,12 @@ pub struct Chrome {
 /// How the browser window should be presented.
 #[derive(Clone, Copy)]
 pub enum WindowMode {
-    /// Chromeless app window (`--app`), used for the interactive login.
+    /// Chromeless app window (`--app`), maximized, for the interactive login.
     App,
-    /// Ordinary window with tabs and an address bar, used for course viewing.
+    /// Ordinary window with tabs and an address bar, maximized, for course viewing.
     Browser,
+    /// Chromeless app window at a fixed logical size, for the settings screen.
+    AppFramed { width: i32, height: i32 },
 }
 
 impl Chrome {
@@ -103,13 +105,18 @@ impl Chrome {
             cmd.arg(format!("--user-data-dir={}", profile_dir));
         }
         if let Some(url) = url {
-            cmd.arg("--start-maximized");
             match mode {
                 WindowMode::App => {
+                    cmd.arg("--start-maximized");
                     cmd.arg(format!("--app={}", url));
                 }
                 WindowMode::Browser => {
+                    cmd.arg("--start-maximized");
                     cmd.arg(url);
+                }
+                WindowMode::AppFramed { width, height } => {
+                    cmd.arg(format!("--window-size={},{}", width, height));
+                    cmd.arg(format!("--app={}", url));
                 }
             }
         }
