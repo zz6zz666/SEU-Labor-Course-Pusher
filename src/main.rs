@@ -414,6 +414,7 @@ fn open_course_view(app: &Arc<App>) {
         mode: browserhost::WindowMode::Browser,
         exec_path: exe,
         profile_name: brand::TITLE.to_string(),
+        position: None,
     }) {
         Ok(mut win) => {
             let cookies: Vec<browserhost::Cookie> = app
@@ -853,6 +854,7 @@ fn run_wizard_ui(url: &str, data_path: &str, browser: &str) -> Result<()> {
         logical_height: brand::DESIGN_HEIGHT,
         min_width: brand::MIN_WIDTH,
         min_height: brand::MIN_HEIGHT,
+        position: None,
         icon_ico: assets::ICON_ICO,
         data_dir: data,
         browser_override: (!browser.trim().is_empty()).then(|| browser.to_string()),

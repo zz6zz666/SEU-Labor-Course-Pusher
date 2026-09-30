@@ -273,6 +273,7 @@ pub fn run(opts: &LoginOptions<'_>) -> Result<Vec<StoredCookie>> {
         mode: WindowMode::App,
         exec_path: opts.exec_path.map(str::to_string),
         profile_name: crate::brand::TITLE.to_string(),
+        position: None,
     })?;
 
     opts.log

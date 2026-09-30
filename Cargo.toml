@@ -10,6 +10,9 @@ repository = "https://github.com/zz6zz666/SEU-Labor-Course-Pusher"
 name = "seu-labor"
 path = "src/main.rs"
 
+[build-dependencies]
+winres-embed = { path = "../rust-webui-kit/crates/winres-embed" }
+
 [dependencies]
 anyhow = "1"
 # Reusable Windows/web-UI building blocks live in the sibling `rust-webui-kit`.

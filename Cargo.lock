@@ -81,6 +81,7 @@ dependencies = [
  "tungstenite",
  "ureq",
  "windows 0.61.3",
+ "winkit",
 ]
 
 [[package]]
@@ -1279,6 +1280,7 @@ dependencies = [
  "websurface",
  "windows 0.61.3",
  "winkit",
+ "winres-embed",
 ]
 
 [[package]]
@@ -2036,6 +2038,10 @@ version = "0.1.0"
 dependencies = [
  "windows 0.61.3",
 ]
+
+[[package]]
+name = "winres-embed"
+version = "0.1.0"
 
 [[package]]
 name = "wit-bindgen"
