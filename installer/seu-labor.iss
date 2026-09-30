@@ -3,7 +3,7 @@
 ; Produces a single per-user setup.exe (no admin required).
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.1.0"
+  #define MyAppVersion "1.1.1"
 #endif
 
 #define MyAppName "SEU 劳动教育课程推送助手"
@@ -86,7 +86,7 @@ begin
   Sleep(500);
 end;
 
-// Removes a previously installed Electron (1.0.0) build so 1.1.0 cleanly
+// Removes a previously installed Electron (1.0.0) build so 1.1.1 cleanly
 // replaces it instead of coexisting. The shared %APPDATA% data directory
 // (config / cookies / state) is intentionally left untouched.
 procedure RemoveOldElectron();

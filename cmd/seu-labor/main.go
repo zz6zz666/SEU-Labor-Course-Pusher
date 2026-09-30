@@ -100,6 +100,16 @@ func run(ctx context.Context, once, doLogin, showWizard bool) error {
 		log.Warn(w)
 	}
 
+	// Repair the autostart entry on every launch when it is enabled: the stored
+	// path can go stale across upgrades, or have been written malformed by an
+	// older build (which silently broke startup-at-login).
+	if cfg.Behavior.AutoLaunchAtLogin {
+		actual := autostart.Apply(true)
+		if actual != cfg.Behavior.AutoLaunchAtLogin {
+			_ = store.Update(func(c *config.Config) { c.Behavior.AutoLaunchAtLogin = actual })
+		}
+	}
+
 	st, err := state.Open(p.StatePath)
 	if err != nil {
 		return err
@@ -301,11 +311,34 @@ func run(ctx context.Context, once, doLogin, showWizard bool) error {
 		log.Info("设置向导已启动(独立窗口进程)")
 	}
 
+	statusLines := func() []string {
+		s := w.Status()
+		var login string
+		switch st.Get().AuthState {
+		case state.AuthValid:
+			login = "登录正常"
+		case state.AuthExpired:
+			login = "登录失效"
+		default:
+			login = "尚未登录"
+		}
+		first := fmt.Sprintf("%s · 符合条件 %d 门 · 今日新推送 %d 门", login, s.CurrentValid, s.PushedToday)
+		second := s.LastMessage
+		if second == "" {
+			second = "等待首次抓取"
+		}
+		if !s.NextRun.IsZero() {
+			second += fmt.Sprintf("（下次 %s）", s.NextRun.Format("15:04:05"))
+		}
+		return []string{first, second}
+	}
+
 	actions := ui.Actions{
 		StatusText: func() string {
-			s := w.Status()
-			return fmt.Sprintf("%s（符合 %d 门 · 新推送 %d）", s.LastMessage, s.CurrentValid, s.PushedToday)
+			return statusLines()[0]
 		},
+		StatusLines:  statusLines,
+		Version:      version,
 		OnOpenCourse: func() { go openCourseView(p, client, log) },
 		OnLogin:      openLoginAsync,
 		OnFetchNow:   w.TriggerNow,

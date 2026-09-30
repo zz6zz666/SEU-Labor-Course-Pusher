@@ -1,7 +1,7 @@
 # Builds a single self-contained Windows executable.
 # The tray, toast and autostart implementations are pure Go, so CGO is off.
 param(
-    [string]$Version = "1.1.0",
+    [string]$Version = "1.1.1",
     [string]$Output = "release"
 )
 

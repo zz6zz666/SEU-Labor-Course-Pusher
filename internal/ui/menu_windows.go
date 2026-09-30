@@ -15,6 +15,7 @@ type menuEntry struct {
 	label   string
 	glyph   uint16
 	sep     bool
+	info    bool
 	action  func()
 	checked func() bool
 }
@@ -30,13 +31,13 @@ type menu struct {
 	scale   float64
 
 	textFont windows.Handle
+	infoFont windows.Handle
 	iconFont windows.Handle
 
 	// logical metrics (scaled on use)
 	padX, padY  int
 	itemH, sepH int
 	iconCol     int
-	checkW      int
 	radius      int
 
 	shownAt uint32
@@ -80,20 +81,35 @@ func newMenu(t *Tray) (*menu, error) {
 
 func (m *menu) buildEntries() {
 	a := m.tray.actions
-	m.entries = []menuEntry{
-		{label: "打开选课页", glyph: 0xE774, action: a.OnOpenCourse},
-		{label: "重新登录", glyph: 0xE72E, action: a.OnLogin},
-		{label: "立即抓取一次", glyph: 0xE72C, action: a.OnFetchNow},
-		{sep: true},
-		{label: "设置向导", glyph: 0xE713, action: a.OnOpenWizard},
-		{label: "打开 config.json", glyph: 0xE8A5, action: a.OnOpenConfig},
-		{label: "打开日志目录", glyph: 0xE8B7, action: a.OnOpenLogs},
-		{sep: true},
-		{label: "开机自启", glyph: 0xE7E8, action: a.ToggleAutoStart, checked: a.IsAutoStart},
-		{label: "自动选课", glyph: 0xE73E, action: a.ToggleAutoSelect, checked: a.IsAutoSelect},
-		{sep: true},
-		{label: "退出", glyph: 0xE8BB, action: a.OnQuit},
+	m.entries = m.entries[:0]
+	if a.StatusLines != nil {
+		for _, line := range a.StatusLines() {
+			if line == "" {
+				continue
+			}
+			m.entries = append(m.entries, menuEntry{label: line, info: true})
+		}
+		if len(m.entries) > 0 {
+			m.entries = append(m.entries, menuEntry{sep: true})
+		}
 	}
+	m.entries = append(m.entries,
+		menuEntry{label: "打开选课页", glyph: 0xE774, action: a.OnOpenCourse},
+		menuEntry{label: "重新登录", glyph: 0xE72E, action: a.OnLogin},
+		menuEntry{sep: true},
+		menuEntry{label: "立即抓取一次", glyph: 0xE72C, action: a.OnFetchNow},
+		menuEntry{label: "打开日志目录", glyph: 0xE8B7, action: a.OnOpenLogs},
+		menuEntry{label: "打开 config.json", glyph: 0xE8A5, action: a.OnOpenConfig},
+		menuEntry{label: "设置向导", glyph: 0xE713, action: a.OnOpenWizard},
+		menuEntry{sep: true},
+		menuEntry{label: "开机自启", action: a.ToggleAutoStart, checked: a.IsAutoStart},
+		menuEntry{label: "自动选课", action: a.ToggleAutoSelect, checked: a.IsAutoSelect},
+		menuEntry{sep: true},
+	)
+	if a.Version != "" {
+		m.entries = append(m.entries, menuEntry{label: "版本 " + a.Version, info: true})
+	}
+	m.entries = append(m.entries, menuEntry{label: "退出", glyph: 0xE8BB, action: a.OnQuit})
 }
 
 func (m *menu) ensureDPI() {
@@ -106,18 +122,21 @@ func (m *menu) ensureDPI() {
 	if m.textFont != 0 {
 		pDeleteObject.Call(uintptr(m.textFont))
 	}
+	if m.infoFont != 0 {
+		pDeleteObject.Call(uintptr(m.infoFont))
+	}
 	if m.iconFont != 0 {
 		pDeleteObject.Call(uintptr(m.iconFont))
 	}
-	m.textFont = createFont("Segoe UI Variable Text", -int(math.Round(14*m.scale)), fwNormal)
-	m.iconFont = createFont("Segoe MDL2 Assets", -int(math.Round(16*m.scale)), fwNormal)
+	m.textFont = createFont("Segoe UI Variable Text", -int(math.Round(12*m.scale)), fwNormal)
+	m.infoFont = createFont("Segoe UI Variable Text", -int(math.Round(11*m.scale)), fwNormal)
+	m.iconFont = createFont("Segoe MDL2 Assets", -int(math.Round(14*m.scale)), fwNormal)
 
-	m.padX = int(math.Round(6 * m.scale))
+	m.padX = int(math.Round(14 * m.scale))
 	m.padY = int(math.Round(6 * m.scale))
-	m.itemH = int(math.Round(34 * m.scale))
-	m.sepH = int(math.Round(9 * m.scale))
-	m.iconCol = int(math.Round(30 * m.scale))
-	m.checkW = int(math.Round(24 * m.scale))
+	m.itemH = int(math.Round(29 * m.scale))
+	m.sepH = int(math.Round(10 * m.scale))
+	m.iconCol = int(math.Round(31 * m.scale))
 	m.radius = int(math.Round(6 * m.scale))
 }
 
@@ -125,23 +144,27 @@ func (m *menu) measure() (int, int) {
 	m.ensureDPI()
 	hdc, _, _ := pGetDC.Call(uintptr(m.hwnd))
 	defer pReleaseDC.Call(uintptr(m.hwnd), hdc)
-	_, _, _ = pSelectObject.Call(hdc, uintptr(m.textFont))
 
 	maxW := 0
 	for _, e := range m.entries {
 		if e.sep {
 			continue
 		}
+		font := m.textFont
+		if e.info {
+			font = m.infoFont
+		}
+		_, _, _ = pSelectObject.Call(hdc, uintptr(font))
 		w := textWidth(hdc, e.label)
 		if w > maxW {
 			maxW = w
 		}
 	}
-	width := m.padX*2 + m.iconCol + maxW + int(math.Round(10*m.scale)) + m.checkW
+	width := m.padX*2 + m.iconCol + maxW + int(math.Round(14*m.scale))
 	if min := int(math.Round(210 * m.scale)); width < min {
 		width = min
 	}
-	if max := int(math.Round(400 * m.scale)); width > max {
+	if max := int(math.Round(560 * m.scale)); width > max {
 		width = max
 	}
 
@@ -197,11 +220,20 @@ func (m *menu) activate(i int) {
 		return
 	}
 	e := m.entries[i]
-	if e.sep || e.action == nil {
+	if e.sep || e.info || e.action == nil {
+		return
+	}
+	fn := e.action
+	// Toggles keep the menu open so the check updates in place and another
+	// option can be flipped immediately; a click elsewhere dismisses it.
+	if e.checked != nil {
+		go func() {
+			fn()
+			_, _, _ = pInvalidateRect.Call(uintptr(m.hwnd), 0, 1)
+		}()
 		return
 	}
 	m.hide()
-	fn := e.action
 	go fn()
 }
 
@@ -267,6 +299,14 @@ func (m *menu) paintInto(hdc uintptr, w, h int) {
 		}
 
 		row := rect{Left: int32(m.padX), Top: y, Right: int32(w - m.padX), Bottom: y + int32(m.itemH)}
+		if e.info {
+			label := rect{Left: row.Left + int32(m.iconCol), Top: row.Top, Right: row.Right, Bottom: row.Bottom}
+			_, _, _ = pSelectObject.Call(hdc, uintptr(m.infoFont))
+			_, _, _ = pSetTextColor.Call(hdc, 0x00808080)
+			drawText(hdc, e.label, &label, dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
+			y += int32(m.itemH)
+			continue
+		}
 		if i == m.hover {
 			hb := solidBrush(0xEBEBEB)
 			pen, _, _ := pCreatePen.Call(psSolid, 1, 0xEBEBEB)
@@ -279,30 +319,30 @@ func (m *menu) paintInto(hdc uintptr, w, h int) {
 			pDeleteObject.Call(hb)
 		}
 
-		// icon
-		icon := rect{Left: row.Left, Top: row.Top, Right: row.Left + int32(m.iconCol), Bottom: row.Bottom}
-		_, _, _ = pSelectObject.Call(hdc, uintptr(m.iconFont))
-		_, _, _ = pSetTextColor.Call(hdc, 0x00404040)
-		drawText(hdc, string(rune(e.glyph)), &icon, dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
+		// leading gutter: a check for toggles, an icon otherwise
+		gutter := rect{Left: row.Left, Top: row.Top, Right: row.Left + int32(m.iconCol), Bottom: row.Bottom}
+		if e.checked != nil {
+			if e.checked() {
+				_, _, _ = pSelectObject.Call(hdc, uintptr(m.iconFont))
+				_, _, _ = pSetTextColor.Call(hdc, 0x00EB6F2F) // #2F6FEB
+				drawText(hdc, string(rune(0xE73E)), &gutter, dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
+			}
+		} else if e.glyph != 0 {
+			_, _, _ = pSelectObject.Call(hdc, uintptr(m.iconFont))
+			_, _, _ = pSetTextColor.Call(hdc, 0x00666666)
+			drawText(hdc, string(rune(e.glyph)), &gutter, dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
+		}
 
 		// label
 		label := rect{
 			Left:   row.Left + int32(m.iconCol),
 			Top:    row.Top,
-			Right:  row.Right - int32(m.checkW),
+			Right:  row.Right,
 			Bottom: row.Bottom,
 		}
 		_, _, _ = pSelectObject.Call(hdc, uintptr(m.textFont))
 		_, _, _ = pSetTextColor.Call(hdc, 0x001A1A1A)
 		drawText(hdc, e.label, &label, dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
-
-		// check
-		if e.checked != nil && e.checked() {
-			chk := rect{Left: row.Right - int32(m.checkW), Top: row.Top, Right: row.Right, Bottom: row.Bottom}
-			_, _, _ = pSelectObject.Call(hdc, uintptr(m.iconFont))
-			_, _, _ = pSetTextColor.Call(hdc, 0x00EB6F2F) // #2F6FEB
-			drawText(hdc, string(rune(0xE73E)), &chk, dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
-		}
 
 		y += int32(m.itemH)
 	}
@@ -319,7 +359,7 @@ func (m *menu) hitTest(x, y int32) int {
 			hh = int32(m.sepH)
 		}
 		if y >= cy && y < cy+hh {
-			if e.sep {
+			if e.sep || e.info {
 				return -1
 			}
 			return i
@@ -342,7 +382,7 @@ func (m *menu) moveHover(delta int) {
 		if i >= len(m.entries) {
 			i = 0
 		}
-		if !m.entries[i].sep {
+		if !m.entries[i].sep && !m.entries[i].info {
 			break
 		}
 	}

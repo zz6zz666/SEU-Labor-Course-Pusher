@@ -6,6 +6,8 @@ package ui
 // check marks always reflect current state.
 type Actions struct {
 	StatusText       func() string
+	StatusLines      func() []string
+	Version          string
 	OnOpenCourse     func()
 	OnLogin          func()
 	OnFetchNow       func()

@@ -36,7 +36,7 @@ $sc.Save()
 
 # Uninstall entry (HKCU, per-user)
 $version = (Get-Item $Exe).VersionInfo.ProductVersion
-if (-not $version) { $version = "1.1.0" }
+if (-not $version) { $version = "1.1.1" }
 $uninstall = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\SEULaborPusher"
 New-Item -Path $uninstall -Force | Out-Null
 Set-ItemProperty $uninstall -Name DisplayName -Value $AppName

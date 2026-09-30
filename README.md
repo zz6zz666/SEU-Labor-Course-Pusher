@@ -16,7 +16,7 @@
 
 ## 📦 安装
 
-下载 `seu-labor-setup-1.1.0.exe`，双击安装：
+下载 `seu-labor-setup-1.1.1.exe`，双击安装：
 
 - 免管理员，按当前用户安装
 - 自动创建开始菜单快捷方式（桌面快捷方式可选）
@@ -49,8 +49,8 @@
 需要 Go 1.24+；打包安装包另需 Inno Setup 6。
 
 ```powershell
-.\build.ps1 -Version 1.1.0      # 主程序: release\seu-labor.exe
-.\package.ps1                   # 安装包: release\seu-labor-setup-1.1.0.exe
+.\build.ps1 -Version 1.1.1      # 主程序: release\seu-labor.exe
+.\package.ps1                   # 安装包: release\seu-labor-setup-1.1.1.exe
 ```
 
 ## 🧩 架构与原理

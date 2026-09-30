@@ -5,7 +5,6 @@
 package autostart
 
 import (
-	"fmt"
 	"os"
 
 	"golang.org/x/sys/windows/registry"
@@ -36,7 +35,7 @@ func Enable() error {
 		return err
 	}
 	defer k.Close()
-	return k.SetStringValue(valueName, fmt.Sprintf("%q", exe))
+	return k.SetStringValue(valueName, `"`+exe+`"`)
 }
 
 func Disable() error {
