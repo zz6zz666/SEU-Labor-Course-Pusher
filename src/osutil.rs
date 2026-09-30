@@ -1,16 +1,13 @@
-//! Opens files, folders and URLs with the shell, plus the process
-//! AppUserModelID. DPI awareness is established by the UI crates when they
-//! create their first window.
+//! Opens files, folders and URLs with the shell. The process AppUserModelID and
+//! DPI awareness are applied via `winkit` at startup.
 
 use std::io::Write;
 use std::process::Command;
 
 use anyhow::{anyhow, Result};
-use windows::core::PCWSTR;
 use windows::Win32::System::Console::{
     AttachConsole, GetStdHandle, ATTACH_PARENT_PROCESS, STD_OUTPUT_HANDLE,
 };
-use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 
 pub const APP_APP_USER_MODEL_ID: &str = "SEU.Labor.Pusher";
 
@@ -79,10 +76,3 @@ pub fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-/// Sets the process AppUserModelID, required for desktop toast notifications to
-/// be attributed to this app.
-pub fn set_app_user_model_id(id: &str) -> Result<()> {
-    let w = wide(id);
-    unsafe { SetCurrentProcessExplicitAppUserModelID(PCWSTR(w.as_ptr())) }
-        .map_err(|e| anyhow!("设置 AppUserModelID 失败: {e}"))
-}

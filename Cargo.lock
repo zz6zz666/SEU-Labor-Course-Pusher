@@ -1278,6 +1278,7 @@ dependencies = [
  "webmsg",
  "websurface",
  "windows 0.61.3",
+ "winkit",
 ]
 
 [[package]]

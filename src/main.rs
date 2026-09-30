@@ -44,6 +44,7 @@ const VERSION: &str = match option_env!("SEU_LABOR_VERSION") {
 };
 
 fn main() {
+    let _ = winkit::set_app_user_model_id(osutil::APP_APP_USER_MODEL_ID);
     let args: Vec<String> = std::env::args().skip(1).collect();
     if has_flag(&args, "-version") {
         osutil::console_println(VERSION);
@@ -113,9 +114,6 @@ fn run(once: bool, do_login: bool, show_wizard: bool) -> Result<()> {
         cfg.logging.retention_days as i64,
     );
     let log = logging::new("main");
-    if let Err(e) = osutil::set_app_user_model_id(osutil::APP_APP_USER_MODEL_ID) {
-        log.warn(format!("设置 AppUserModelID 失败: {}", e));
-    }
 
     log.info("================ SEU 劳动教育课程监控 ================");
     log.info(format!("版本 {} · {}", VERSION, p.data_dir.display()));
