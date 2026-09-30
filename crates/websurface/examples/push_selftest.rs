@@ -67,6 +67,8 @@ fn main() {
         browser_override: None,
         profile_name: "push selftest".to_string(),
         chromeless: true,
+        zoom: 1.0,
+        zoomable: false,
     };
 
     let mut host = WebHost::new().expect("create host");

@@ -13,9 +13,13 @@ lets other threads open, push to, or close surfaces through `WebHostHandle`.
 Surfaces report their `Caps`, so callers degrade instead of assuming parity.
 
 - `Engine::{Auto, WebView2, Borrowed}`, `SurfaceKind`, `Caps`, `SurfaceId`
-- `Surface::{kind, caps, navigate, eval, post, is_alive, close, hwnd}`
-- `SurfaceConfig { url, title, logical_width, logical_height, min_width, min_height, icon_ico, data_dir, browser_override, profile_name, chromeless }`
+- `Surface::{kind, caps, navigate, eval, post, is_alive, close, set_zoom, zoom, hwnd}`
+- `SurfaceConfig { url, title, logical_width, logical_height, min_width, min_height, icon_ico, data_dir, browser_override, profile_name, chromeless, zoom, zoomable }`
 - `WebHost::{new, open, handle, run}`; `WebHostHandle::{open, post, broadcast, close}`
+
+User zoom is disabled by default (`zoomable: false`); the host can still scale
+the page with `Surface::set_zoom` (WebView2 uses the native zoom factor, the
+borrowed engine applies a CSS zoom plus an in-page gesture guard).
 
 ```rust,no_run
 use websurface::{Engine, SurfaceConfig, WebHost};

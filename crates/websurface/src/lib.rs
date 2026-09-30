@@ -22,6 +22,8 @@
 //!         browser_override: None,
 //!         profile_name: "demo".into(),
 //!         chromeless: true,
+//!         zoom: 1.0,
+//!         zoomable: false,
 //!     },
 //!     Engine::Auto,
 //! )?;
@@ -76,6 +78,8 @@ pub struct Caps {
     pub can_push: bool,
     /// The surface honours a fixed logical size.
     pub fixed_size: bool,
+    /// The surface accepts a programmatic zoom factor.
+    pub can_zoom: bool,
 }
 
 /// Everything host-specific needed to open a surface.
@@ -98,6 +102,12 @@ pub struct SurfaceConfig {
     /// also run a normal, chromeful window); the WebView2 engine is always
     /// chromeless because the window is one we own.
     pub chromeless: bool,
+    /// Initial page zoom factor (1.0 = 100%).
+    pub zoom: f64,
+    /// Whether the user may change the zoom (pinch / Ctrl+scroll / Ctrl +/-).
+    /// When false, user zoom is disabled; the host can still zoom via
+    /// [`Surface::set_zoom`].
+    pub zoomable: bool,
 }
 
 pub trait Surface {
@@ -120,6 +130,11 @@ pub trait Surface {
 
     fn is_alive(&mut self) -> bool;
     fn close(&mut self);
+
+    /// Sets the page zoom factor (1.0 = 100%), independent of user zoom.
+    fn set_zoom(&mut self, factor: f64) -> Result<()>;
+    /// The current page zoom factor.
+    fn zoom(&self) -> f64;
 
     /// The native window handle for an embedded surface, or `None` for an
     /// external one (whose window belongs to another process). Lets a host

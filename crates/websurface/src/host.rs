@@ -200,6 +200,7 @@ mod tests {
                 embedded: false,
                 can_push: self.can_push,
                 fixed_size: false,
+                can_zoom: false,
             }
         }
         fn navigate(&mut self, _url: &str) -> Result<()> {
@@ -217,6 +218,12 @@ mod tests {
         }
         fn close(&mut self) {
             self.closed.store(true, Ordering::SeqCst);
+        }
+        fn set_zoom(&mut self, _factor: f64) -> Result<()> {
+            Ok(())
+        }
+        fn zoom(&self) -> f64 {
+            1.0
         }
     }
 

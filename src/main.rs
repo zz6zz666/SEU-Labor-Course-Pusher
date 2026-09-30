@@ -862,6 +862,8 @@ fn run_wizard_ui(url: &str, data_path: &str, browser: &str) -> Result<()> {
         browser_override: (!browser.trim().is_empty()).then(|| browser.to_string()),
         profile_name: brand::TITLE.to_string(),
         chromeless: true,
+        zoom: 1.0,
+        zoomable: false,
     };
     let mut host = websurface::WebHost::new()?;
     host.open(cfg, wizard_engine())?;

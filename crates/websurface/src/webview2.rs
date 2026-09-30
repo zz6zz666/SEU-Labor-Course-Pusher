@@ -11,7 +11,7 @@ use webview2_com::{
     CreateCoreWebView2ControllerCompletedHandler, CreateCoreWebView2EnvironmentCompletedHandler,
     ExecuteScriptCompletedHandler,
 };
-use windows::core::{w, PCWSTR, PWSTR};
+use windows::core::{w, Interface, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{E_POINTER, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi;
 use windows::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, COINIT_APARTMENTTHREADED};
@@ -26,6 +26,7 @@ pub struct WebView2Surface {
     controller: Option<ICoreWebView2Controller>,
     min_width: i32,
     min_height: i32,
+    zoom: f64,
 }
 
 /// Whether the machine has a usable WebView2 runtime.
@@ -87,6 +88,7 @@ impl WebView2Surface {
             controller: None,
             min_width: dim(cfg.min_width),
             min_height: dim(cfg.min_height),
+            zoom: 1.0,
         });
         // Keep the box's heap address stable: the wndproc recovers this pointer
         // from `GWLP_USERDATA`, and an `Box<dyn Surface>` unsize coercion below
@@ -103,6 +105,10 @@ impl WebView2Surface {
             let settings = webview.Settings()?;
             settings.SetAreDefaultContextMenusEnabled(false)?;
             settings.SetAreDevToolsEnabled(false)?;
+            settings.SetIsZoomControlEnabled(cfg.zoomable)?;
+            // Accelerator keys (incl. Ctrl +/-) live on the v3 settings interface.
+            let settings3: ICoreWebView2Settings3 = settings.cast()?;
+            settings3.SetAreBrowserAcceleratorKeysEnabled(cfg.zoomable)?;
         }
 
         let (cx, cy) = client_size(hwnd);
@@ -115,6 +121,11 @@ impl WebView2Surface {
             })?;
             controller.SetIsVisible(true)?;
         }
+        let zoom = if cfg.zoom > 0.0 { cfg.zoom } else { 1.0 };
+        unsafe {
+            let _ = controller.SetZoomFactor(zoom);
+        }
+        this.zoom = zoom;
         this.controller = Some(controller);
 
         let url_w: Vec<u16> = cfg.url.encode_utf16().chain(std::iter::once(0)).collect();
@@ -148,6 +159,7 @@ impl Surface for WebView2Surface {
             embedded: true,
             can_push: true,
             fixed_size: false,
+            can_zoom: true,
         }
     }
 
@@ -197,6 +209,21 @@ impl Surface for WebView2Surface {
         unsafe {
             let _ = PostMessageW(Some(self.hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
+    }
+
+    fn set_zoom(&mut self, factor: f64) -> Result<()> {
+        let factor = if factor > 0.0 { factor } else { 1.0 };
+        let controller = self
+            .controller
+            .as_ref()
+            .ok_or_else(|| anyhow!("WebView2 is not ready yet"))?;
+        unsafe { controller.SetZoomFactor(factor)? };
+        self.zoom = factor;
+        Ok(())
+    }
+
+    fn zoom(&self) -> f64 {
+        self.zoom
     }
 
     fn hwnd(&self) -> Option<isize> {
