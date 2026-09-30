@@ -1,5 +1,6 @@
-//! Opens files, folders and URLs with the shell, plus process-level Windows
-//! setup (DPI awareness, AppUserModelID).
+//! Opens files, folders and URLs with the shell, plus the process
+//! AppUserModelID. DPI awareness is established by the UI crates when they
+//! create their first window.
 
 use std::io::Write;
 use std::process::Command;
@@ -9,12 +10,7 @@ use windows::core::PCWSTR;
 use windows::Win32::System::Console::{
     AttachConsole, GetStdHandle, ATTACH_PARENT_PROCESS, STD_OUTPUT_HANDLE,
 };
-use windows::Win32::UI::HiDpi::{
-    SetProcessDpiAwareness, SetProcessDpiAwarenessContext,
-    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, PROCESS_DPI_AWARENESS,
-};
 use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
-use windows::Win32::UI::WindowsAndMessaging::SetProcessDPIAware;
 
 pub const APP_APP_USER_MODEL_ID: &str = "SEU.Labor.Pusher";
 
@@ -89,18 +85,4 @@ pub fn set_app_user_model_id(id: &str) -> Result<()> {
     let w = wide(id);
     unsafe { SetCurrentProcessExplicitAppUserModelID(PCWSTR(w.as_ptr())) }
         .map_err(|e| anyhow!("设置 AppUserModelID 失败: {e}"))
-}
-
-/// Opts the process into Per-Monitor V2 DPI awareness so windows render crisply
-/// on scaled (high-DPI) displays. Must be called before any window is created.
-pub fn enable_per_monitor_dpi() {
-    unsafe {
-        if SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2).is_ok() {
-            return;
-        }
-        if SetProcessDpiAwareness(PROCESS_DPI_AWARENESS(2)).is_ok() {
-            return;
-        }
-        let _ = SetProcessDPIAware();
-    }
 }

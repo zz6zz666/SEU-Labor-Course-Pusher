@@ -1,0 +1,19 @@
+[package]
+name = "orbit-demo"
+version = "1.0.0"
+edition.workspace = true
+description = "Orbit: a playable multi-window tray demo built on traykit/webmsg/websurface"
+publish = false
+
+[[bin]]
+name = "orbit-demo"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+websurface = { path = "../crates/websurface" }
+webmsg = { path = "../crates/webmsg" }
+traykit = { path = "../crates/traykit" }
+browserhost = { path = "../crates/browserhost" }

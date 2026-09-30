@@ -128,6 +128,9 @@ impl Tray {
     /// Creates the tray icon and its popup menu. Must be called on the thread
     /// that will later call [`Tray::run`] (the message-loop thread).
     pub fn new(cfg: TrayConfig) -> Result<Tray> {
+        // The popup is drawn at the cursor monitor's scale; skip this and Windows
+        // would stretch the unaware popup.
+        winkit::enable_per_monitor_dpi();
         let hinst = module_handle();
 
         let cx = unsafe { GetSystemMetrics(SM_CXSMICON) };

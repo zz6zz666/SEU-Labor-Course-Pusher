@@ -16,6 +16,7 @@ use windows::Win32::Foundation::{E_POINTER, HINSTANCE, HWND, LPARAM, LRESULT, RE
 use windows::Win32::Graphics::Gdi;
 use windows::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -24,8 +25,10 @@ use crate::{Caps, Surface, SurfaceConfig, SurfaceKind};
 pub struct WebView2Surface {
     hwnd: HWND,
     controller: Option<ICoreWebView2Controller>,
-    min_width: i32,
-    min_height: i32,
+    /// Minimum window size in logical DIPs, scaled by the window's current DPI
+    /// when queried, so a move to a different-DPI monitor stays correct.
+    min_width_dip: i32,
+    min_height_dip: i32,
     zoom: f64,
 }
 
@@ -44,6 +47,9 @@ pub fn is_available() -> bool {
 impl WebView2Surface {
     /// Creates the window + controller and starts loading `cfg.url`.
     pub fn open(cfg: SurfaceConfig) -> Result<Box<dyn Surface>> {
+        // Sizing below is in physical pixels, so the process must be DPI aware
+        // first or Windows stretches (and blurs) the whole window.
+        winkit::enable_per_monitor_dpi();
         unsafe {
             let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         }
@@ -86,8 +92,8 @@ impl WebView2Surface {
         let mut this = Box::new(WebView2Surface {
             hwnd,
             controller: None,
-            min_width: dim(cfg.min_width),
-            min_height: dim(cfg.min_height),
+            min_width_dip: cfg.min_width,
+            min_height_dip: cfg.min_height,
             zoom: 1.0,
         });
         // Keep the box's heap address stable: the wndproc recovers this pointer
@@ -338,10 +344,32 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
                 let s = unsafe { &*ptr };
                 let mmi = lparam.0 as *mut MINMAXINFO;
                 if !mmi.is_null() {
+                    let scale = unsafe { GetDpiForWindow(hwnd) } as f64 / 96.0;
                     unsafe {
-                        (*mmi).ptMinTrackSize.x = s.min_width;
-                        (*mmi).ptMinTrackSize.y = s.min_height;
+                        (*mmi).ptMinTrackSize.x = (s.min_width_dip as f64 * scale).round() as i32;
+                        (*mmi).ptMinTrackSize.y = (s.min_height_dip as f64 * scale).round() as i32;
                     }
+                }
+            }
+            LRESULT(0)
+        }
+        WM_DPICHANGED => {
+            // Adopt the suggested rect so the window and its WebView2 content
+            // rescale when moved to a monitor with a different DPI. The follow-up
+            // WM_SIZE re-bounds the controller.
+            let rect = lparam.0 as *const RECT;
+            if !rect.is_null() {
+                let r = unsafe { *rect };
+                unsafe {
+                    let _ = SetWindowPos(
+                        hwnd,
+                        None,
+                        r.left,
+                        r.top,
+                        r.right - r.left,
+                        r.bottom - r.top,
+                        SWP_NOZORDER | SWP_NOACTIVATE,
+                    );
                 }
             }
             LRESULT(0)

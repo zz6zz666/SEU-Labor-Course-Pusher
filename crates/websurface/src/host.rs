@@ -8,11 +8,12 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
 use serde_json::Value;
-use windows::Win32::Foundation::{LPARAM, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, MsgWaitForMultipleObjects, PeekMessageW, PostThreadMessageW, TranslateMessage,
-    MSG, PM_NOREMOVE, PM_REMOVE, QS_ALLINPUT, WM_APP, WM_QUIT,
+    DispatchMessageW, MsgWaitForMultipleObjects, PeekMessageW, PostThreadMessageW,
+    SetForegroundWindow, TranslateMessage, MSG, PM_NOREMOVE, PM_REMOVE, QS_ALLINPUT, WM_APP,
+    WM_QUIT,
 };
 
 use crate::{create, Engine, Surface, SurfaceConfig, SurfaceId, SurfaceKind};
@@ -76,34 +77,66 @@ impl WebHost {
     pub fn run(&mut self) -> Result<()> {
         loop {
             self.drain();
-            self.dispatch_pending();
+            if self.dispatch_pending() {
+                return Ok(());
+            }
             self.surfaces.retain(|_, s| s.is_alive());
             if self.surfaces.is_empty() {
                 return Ok(());
             }
-            // Block until a message (or a wake) arrives. With an external
-            // surface present, time out periodically so its liveness is polled.
-            let all_embedded = self
-                .surfaces
-                .values()
-                .all(|s| s.kind() == SurfaceKind::Embedded);
-            let timeout = if all_embedded { u32::MAX } else { 200 };
-            unsafe { MsgWaitForMultipleObjects(None, false, timeout, QS_ALLINPUT) };
+            self.wait();
         }
     }
 
-    fn dispatch_pending(&mut self) {
+    /// Pumps messages until `stop()` returns true, even when no surface is open.
+    ///
+    /// Unlike [`WebHost::run`], the loop does not end just because the last
+    /// window closed, so it can keep a resident host alive (a tray app, for
+    /// instance). It dispatches messages for *every* window on this thread (a
+    /// tray icon and its popup included), so one thread can drive both. With
+    /// only embedded surfaces the loop blocks on messages; a host that changes
+    /// external state should call [`WebHostHandle::wake`] so `stop()` is
+    /// re-checked promptly.
+    pub fn run_until(&mut self, stop: impl Fn() -> bool) -> Result<()> {
+        loop {
+            self.drain();
+            if self.dispatch_pending() {
+                return Ok(());
+            }
+            self.surfaces.retain(|_, s| s.is_alive());
+            if stop() {
+                return Ok(());
+            }
+            self.wait();
+        }
+    }
+
+    /// Blocks until a message arrives; external surfaces are polled so their
+    /// liveness is noticed without traffic.
+    fn wait(&mut self) {
+        let all_embedded = self
+            .surfaces
+            .values()
+            .all(|s| s.kind() == SurfaceKind::Embedded);
+        let timeout = if all_embedded { u32::MAX } else { 200 };
+        unsafe { MsgWaitForMultipleObjects(None, false, timeout, QS_ALLINPUT) };
+    }
+
+    /// Dispatches queued window messages; returns true when `WM_QUIT` was seen,
+    /// in which case the caller should stop looping.
+    fn dispatch_pending(&mut self) -> bool {
         let mut msg = MSG::default();
         while unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
             if msg.message == WM_QUIT {
                 self.surfaces.clear();
-                return;
+                return true;
             }
             unsafe {
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
         }
+        false
     }
 
     fn drain(&mut self) {
@@ -170,11 +203,38 @@ impl WebHostHandle {
         }));
     }
 
-    fn push(&self, job: Job) {
-        self.0.queue.lock().unwrap().push(job);
+    /// Raises an embedded surface's window. A no-op for an external surface,
+    /// whose window belongs to another process.
+    pub fn bring_to_front(&self, id: SurfaceId) {
+        self.push(Box::new(move |surfaces| {
+            if let Some(hwnd) = surfaces.get_mut(&id).and_then(|s| s.hwnd()) {
+                unsafe { let _ = SetForegroundWindow(HWND(hwnd as *mut core::ffi::c_void)); }
+            }
+        }));
+    }
+
+    /// The ids of the surfaces that are still open. Lets a host reconcile its
+    /// own bookkeeping after a user closes a window with the native title-bar
+    /// button, which no host call observes.
+    pub fn live_ids(&self) -> Vec<SurfaceId> {
+        let (tx, rx) = mpsc::channel();
+        self.push(Box::new(move |surfaces| {
+            let _ = tx.send(surfaces.keys().copied().collect::<Vec<_>>());
+        }));
+        rx.recv().unwrap_or_default()
+    }
+
+    /// Wakes the host loop if it is blocked on messages, so a predicate passed
+    /// to [`WebHost::run_until`] is re-evaluated promptly.
+    pub fn wake(&self) {
         unsafe {
             let _ = PostThreadMessageW(self.0.thread_id, WAKE, WPARAM(0), LPARAM(0));
         }
+    }
+
+    fn push(&self, job: Job) {
+        self.0.queue.lock().unwrap().push(job);
+        self.wake();
     }
 }
 
@@ -263,5 +323,11 @@ mod tests {
 
         // caps().can_push == false means the host must not push to it.
         assert!(posted2.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn run_until_returns_once_the_predicate_holds() {
+        let mut host = WebHost::new().unwrap();
+        host.run_until(|| true).unwrap();
     }
 }

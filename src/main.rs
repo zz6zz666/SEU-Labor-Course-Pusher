@@ -44,8 +44,6 @@ const VERSION: &str = match option_env!("SEU_LABOR_VERSION") {
 };
 
 fn main() {
-    osutil::enable_per_monitor_dpi();
-
     let args: Vec<String> = std::env::args().skip(1).collect();
     if has_flag(&args, "-version") {
         osutil::console_println(VERSION);
