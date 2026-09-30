@@ -20,6 +20,7 @@ if (-not (Test-Path $src)) {
 
 New-Item -ItemType Directory -Path $Root -Force | Out-Null
 Copy-Item $src $Exe -Force
+Copy-Item (Join-Path $PSScriptRoot "vendor\WebView2Loader.dll") (Join-Path $Root "WebView2Loader.dll") -Force
 Copy-Item (Join-Path $PSScriptRoot "assets\icon.ico") (Join-Path $Root "icon.ico") -Force
 Copy-Item (Join-Path $PSScriptRoot "uninstall.ps1") $Root -Force
 

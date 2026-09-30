@@ -1,0 +1,795 @@
+//! Command seu-labor is the resident SEU labor-course watcher (Rust port).
+//!
+//! Polling, auto-selection and auto-cancel use plain HTTP (the list is
+//! server-rendered). The system Chromium browser is launched only for
+//! interactive login and course viewing.
+
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod appwindow;
+mod assets;
+mod autostart;
+mod browser;
+mod config;
+mod logging;
+mod login;
+mod notify;
+mod osutil;
+mod paths;
+mod proc;
+mod selection;
+mod session;
+mod singleinstance;
+mod site;
+mod state;
+mod ui;
+mod watcher;
+mod web;
+mod wizard;
+
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use anyhow::Result;
+
+use crate::browser::Browser;
+use crate::logging::Logger;
+use crate::notify::Dispatcher;
+use crate::selection::Runner;
+use crate::session::Client;
+use crate::watcher::Watcher;
+
+const VERSION: &str = match option_env!("SEU_LABOR_VERSION") {
+    Some(v) => v,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
+fn main() {
+    osutil::enable_per_monitor_dpi();
+
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if has_flag(&args, "-version") {
+        println!("{}", VERSION);
+        return;
+    }
+    if has_flag(&args, "-wizard-ui") {
+        let url = flag_value(&args, "-wiz-url").unwrap_or_default();
+        let data = flag_value(&args, "-wiz-data").unwrap_or_default();
+        if let Err(e) = run_wizard_ui(&url, &data) {
+            eprintln!("错误: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    let once = has_flag(&args, "-once");
+    let do_login = has_flag(&args, "-login");
+    let show_wizard = has_flag(&args, "-wizard");
+
+    if let Err(e) = run(once, do_login, show_wizard) {
+        eprintln!("错误: {}", e);
+        std::process::exit(1);
+    }
+}
+
+fn has_flag(args: &[String], name: &str) -> bool {
+    let alt = format!("-{}", name);
+    args.iter().any(|a| a == name || a == &alt)
+}
+
+fn flag_value(args: &[String], name: &str) -> Option<String> {
+    let alt = format!("-{}", name);
+    for (i, a) in args.iter().enumerate() {
+        if a == name || a == &alt {
+            return args.get(i + 1).cloned();
+        }
+    }
+    None
+}
+
+struct WizardState {
+    srv: Option<Arc<wizard::Server>>,
+    proc: Option<proc::ChildProc>,
+}
+
+struct App {
+    p: paths::Paths,
+    store: Arc<config::Store>,
+    st: Arc<state::Store>,
+    client: Arc<Client>,
+    w: Arc<Watcher>,
+    dispatcher: Arc<Dispatcher>,
+    log: Logger,
+    login_mu: Mutex<()>,
+    course_view: Mutex<Option<browser::cdp::Chrome>>,
+    wizard: Mutex<WizardState>,
+}
+
+fn run(once: bool, do_login: bool, show_wizard: bool) -> Result<()> {
+    let p = paths::Paths::resolve()?;
+    let (store, warnings) = config::Store::open(p.config_path.clone())?;
+    let cfg = store.get();
+    logging::init(
+        p.log_dir.clone(),
+        logging::Level::parse(&cfg.logging.level),
+        cfg.logging.retention_days as i64,
+    );
+    let log = logging::new("main");
+    if let Err(e) = osutil::set_app_user_model_id(osutil::APP_APP_USER_MODEL_ID) {
+        log.warn(format!("设置 AppUserModelID 失败: {}", e));
+    }
+
+    log.info("================ SEU 劳动教育课程监控 ================");
+    log.info(format!("版本 {} · {}", VERSION, p.data_dir.display()));
+    log.info(format!("运行配置: {}", cfg.safe_summary()));
+    for w in &warnings {
+        log.warn(w);
+    }
+
+    // Repair the autostart entry on every launch when it is enabled.
+    if cfg.behavior.auto_launch_at_login {
+        let actual = autostart::apply(true);
+        if actual != cfg.behavior.auto_launch_at_login {
+            let _ = store.update(|c| c.behavior.auto_launch_at_login = actual);
+        }
+    }
+
+    let st = state::Store::open(p.state_path.clone())?;
+    let client = Arc::new(Client::new(p.cookies_path.clone(), Duration::from_secs(20))?);
+
+    if do_login {
+        return run_login(&p, &store, &client, &st, &log);
+    }
+    if client.jar.is_empty() {
+        if cfg.behavior.auto_login && cfg.has_credentials() {
+            log.info("尚无登录态,将由后台尝试静默登录");
+        } else {
+            log.warn("尚未登录:请先运行 `seu-labor -login` 完成一次登录");
+        }
+    }
+
+    let mut dispatcher = Dispatcher::new(logging::new("notify"));
+    dispatcher.add(Box::new(notify::pushplus::PushPlus::new(
+        store.clone(),
+        logging::new("pushplus"),
+    )));
+    dispatcher.add(Box::new(notify::toast::Toast::new(store.clone())));
+    let dispatcher = Arc::new(dispatcher);
+
+    let selector = Arc::new(Runner {
+        client: client.clone(),
+    });
+    let w = Watcher::new(
+        store.clone(),
+        st.clone(),
+        client.clone(),
+        dispatcher.clone(),
+        logging::new("watcher"),
+        Some(selector),
+    );
+
+    let app = Arc::new(App {
+        p: p.clone(),
+        store: store.clone(),
+        st: st.clone(),
+        client: client.clone(),
+        w: w.clone(),
+        dispatcher: dispatcher.clone(),
+        log: log.clone(),
+        login_mu: Mutex::new(()),
+        course_view: Mutex::new(None),
+        wizard: Mutex::new(WizardState {
+            srv: None,
+            proc: None,
+        }),
+    });
+
+    if once {
+        w.tick();
+        let s = w.status();
+        log.info(format!("单次抓取结果: {} - {}", s.last_verdict, s.last_message));
+        let _ = client.jar.save();
+        return Ok(());
+    }
+
+    let (inst, already) = singleinstance::acquire();
+    if already {
+        log.info("检测到已有实例在运行,请求其打开设置向导后退出");
+        singleinstance::signal_existing();
+        return Ok(());
+    }
+
+    let tray = match ui::TrayHandle::new(build_tray_actions(&app)) {
+        Ok(t) => Some(t),
+        Err(e) => {
+            log.warn(format!("创建系统托盘失败,将以无界面方式常驻: {}", e));
+            None
+        }
+    };
+
+    // Silent re-login on auth expiry, then manual fallback.
+    {
+        let app = app.clone();
+        w.set_on_auth_expired(Arc::new(move |reason: String| {
+            let app = app.clone();
+            std::thread::spawn(move || {
+                if try_silent_login(&app) {
+                    app.w.trigger_now();
+                    return;
+                }
+                app.dispatcher
+                    .dispatch(&notify::event::build_auth_expired(&reason));
+                if app.store.get().behavior.auto_open_on_auth_failure {
+                    app.log.info("静默重登不可行,自动打开登录窗口");
+                    open_login_window(&app);
+                }
+            });
+        }));
+    }
+
+    // The polling loop.
+    {
+        let w = w.clone();
+        std::thread::spawn(move || w.run());
+    }
+
+    // While expired, retry the unattended login periodically.
+    {
+        let app = app.clone();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(300));
+            if app.st.get().auth_state != state::AuthState::Expired {
+                continue;
+            }
+            if try_silent_login(&app) {
+                app.w.trigger_now();
+            }
+        });
+    }
+
+    // Config hot reload.
+    {
+        let app = app.clone();
+        let tray = tray;
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(2));
+            let (changed, warns) = app.store.reload();
+            if !changed {
+                continue;
+            }
+            let cfg = app.store.get();
+            logging::configure(
+                logging::Level::parse(&cfg.logging.level),
+                cfg.logging.retention_days as i64,
+            );
+            app.log.info(format!("配置已热重载 {}", cfg.safe_summary()));
+            for x in warns {
+                app.log.warn(x);
+            }
+            if let Some(t) = &tray {
+                t.update();
+            }
+        });
+    }
+
+    if let Some(tray) = tray {
+        let t = tray;
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(3));
+            t.update();
+        });
+    }
+
+    if !st.get().first_run_completed {
+        log.info("首次运行,打开设置向导");
+        open_wizard(&app);
+    } else if show_wizard {
+        log.info("按启动参数打开设置向导");
+        open_wizard(&app);
+    }
+
+    if let Some(inst) = inst {
+        let app = app.clone();
+        std::thread::spawn(move || loop {
+            inst.wait();
+            app.log.info("收到另一实例的请求,打开设置向导");
+            open_wizard(&app);
+        });
+    }
+
+    if let Some(tray) = tray {
+        tray.run();
+        Ok(())
+    } else {
+        loop {
+            std::thread::sleep(Duration::from_secs(3600));
+        }
+    }
+}
+
+// ------------------------------------------------------------------ app glue
+
+fn status_lines(app: &Arc<App>) -> Vec<String> {
+    let s = app.w.status();
+    let login = match app.st.get().auth_state {
+        state::AuthState::Valid => "登录正常",
+        state::AuthState::Expired => "登录失效",
+        state::AuthState::Unknown => "尚未登录",
+    };
+    let first = format!(
+        "{} · 符合条件 {} 门 · 今日新推送 {} 门",
+        login, s.current_valid, s.pushed_today
+    );
+    let mut second = if s.last_message.is_empty() {
+        "等待首次抓取".to_string()
+    } else {
+        s.last_message.clone()
+    };
+    if let Some(t) = s.next_run {
+        second.push_str(&format!("（下次 {}）", t.format("%H:%M:%S")));
+    }
+    vec![first, second]
+}
+
+fn try_silent_login(app: &Arc<App>) -> bool {
+    let Ok(_guard) = app.login_mu.try_lock() else {
+        return false;
+    };
+    let cfg = app.store.get();
+    if !cfg.behavior.auto_login || !cfg.has_credentials() {
+        return false;
+    }
+    let res = login::auto_run(
+        &cfg.credentials.username,
+        &cfg.credentials.password,
+        &logging::new("login"),
+    );
+    if res.outcome != login::AutoOutcome::Success {
+        app.log
+            .warn(format!("静默重登未成功: {:?} {}", res.outcome, res.detail));
+        return false;
+    }
+    app.client.jar.set_stored(&res.cookies);
+    if let Err(e) = app.client.jar.save() {
+        app.log.warn(format!("保存登录态失败: {}", e));
+    }
+    let _ = app.st.update(|s| {
+        s.first_run_completed = true;
+        s.auth_state = state::AuthState::Valid;
+    });
+    app.log.info("静默重登成功");
+    true
+}
+
+fn open_login_window(app: &Arc<App>) {
+    let cfg = app.store.get();
+    let exe = cfg.browser_path().map(str::to_string);
+    let cred = cfg.credentials;
+    let profile = app.p.data_dir.join("browser-profile");
+    let profile = profile.to_string_lossy().into_owned();
+    let log = logging::new("login");
+    let opts = login::LoginOptions {
+        url: session::CAS_LOGIN,
+        profile_dir: &profile,
+        timeout: Duration::from_secs(300),
+        poll_interval: Duration::from_secs(3),
+        username: &cred.username,
+        password: &cred.password,
+        exec_path: exe.as_deref(),
+        log: &log,
+    };
+    match login::run(&opts) {
+        Ok(cookies) => {
+            app.client.jar.set_stored(&cookies);
+            let _ = app.client.jar.save();
+            let _ = app.st.update(|s| {
+                s.first_run_completed = true;
+                s.auth_state = state::AuthState::Valid;
+            });
+            app.log.info("登录态已保存,后台现在可以直接轮询");
+            app.w.trigger_now();
+        }
+        Err(e) => app.log.warn(format!("登录失败: {}", e)),
+    }
+}
+
+fn open_course_view(app: &Arc<App>) {
+    let mut guard = app.course_view.lock().unwrap();
+    if let Some(view) = guard.as_mut() {
+        // Only reuse a live window: navigating a closed browser would block.
+        if view.is_alive() && view.navigate(session::COURSE_PAGE).is_ok() {
+            return;
+        }
+        view.close();
+        *guard = None;
+    }
+
+    let profile = app
+        .p
+        .data_dir
+        .join("browser-profile-view")
+        .to_string_lossy()
+        .into_owned();
+    let exe = app.store.get().browser_path().map(str::to_string);
+    match browser::cdp::Chrome::launch(
+        true,
+        &profile,
+        Some(session::COURSE_PAGE),
+        browser::cdp::WindowMode::Browser,
+        exe.as_deref(),
+    ) {
+        Ok(mut win) => {
+            if let Err(e) = win.set_cookies(&app.client.jar.all()) {
+                app.log.warn(format!("注入登录态失败: {}", e));
+            }
+            if let Err(e) = win.navigate(session::COURSE_PAGE) {
+                app.log.warn(format!("加载选课页失败: {}", e));
+            }
+            *guard = Some(win);
+        }
+        Err(e) => app.log.warn(format!("打开选课页失败: {}", e)),
+    }
+}
+
+fn open_wizard(app: &Arc<App>) {
+    // Tear down any existing wizard server + window process.
+    {
+        let mut wz = app.wizard.lock().unwrap();
+        if let Some(p) = wz.proc.take() {
+            p.kill();
+        }
+        if let Some(srv) = wz.srv.take() {
+            srv.set_on_close(Box::new(|| {}));
+            srv.close();
+        }
+    }
+
+    let srv = match wizard::open(build_wizard_actions(app), logging::new("wizard")) {
+        Ok(s) => s,
+        Err(e) => {
+            app.log.warn(format!("启动设置向导失败: {}", e));
+            return;
+        }
+    };
+
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => {
+            app.log
+                .warn(format!("定位程序路径失败,改用默认浏览器: {}", e));
+            let _ = osutil::open_url(&srv.url());
+            return;
+        }
+    };
+    let data = app
+        .p
+        .data_dir
+        .join("wizard-webview")
+        .to_string_lossy()
+        .into_owned();
+    let args = vec![
+        "-wizard-ui".to_string(),
+        "-wiz-url".to_string(),
+        srv.url(),
+        "-wiz-data".to_string(),
+        data,
+    ];
+
+    match proc::spawn(&exe, &args) {
+        Ok(cp) => {
+            // The page's「关闭窗口」button closes the API server; also stop the child.
+            {
+                let app2 = app.clone();
+                srv.set_on_close(Box::new(move || {
+                    let app = app2.clone();
+                    std::thread::spawn(move || {
+                        let mut wz = app.wizard.lock().unwrap();
+                        if let Some(p) = wz.proc.take() {
+                            p.kill();
+                        }
+                    });
+                }));
+            }
+            // The child exiting tears the API server down.
+            {
+                let app2 = app.clone();
+                let srv2 = srv.clone();
+                let pid = cp.pid();
+                let cp_thread = cp.clone();
+                std::thread::spawn(move || {
+                    cp_thread.wait();
+                    let mut wz = app2.wizard.lock().unwrap();
+                    let same = wz.proc.as_ref().map(|p| p.pid() == pid).unwrap_or(false);
+                    if same {
+                        wz.proc = None;
+                    }
+                    let srv = if same { wz.srv.take() } else { None };
+                    drop(wz);
+                    if let Some(srv) = srv {
+                        srv.set_on_close(Box::new(|| {}));
+                        srv.close();
+                    }
+                    let _ = srv2;
+                });
+            }
+            let mut wz = app.wizard.lock().unwrap();
+            wz.srv = Some(srv);
+            wz.proc = Some(cp);
+            app.log.info("设置向导已启动(独立窗口进程)");
+        }
+        Err(e) => {
+            app.log
+                .warn(format!("打开设置向导窗口失败,改用默认浏览器: {}", e));
+            let _ = osutil::open_url(&srv.url());
+            let mut wz = app.wizard.lock().unwrap();
+            wz.srv = Some(srv);
+        }
+    }
+}
+
+fn build_tray_actions(app: &Arc<App>) -> ui::Actions {
+    let a = app.clone();
+    let status_lines_cb: ui::LinesGetter = Arc::new(move || status_lines(&a));
+    let a = app.clone();
+    let status_text: ui::StringGetter =
+        Arc::new(move || status_lines(&a).into_iter().next().unwrap_or_default());
+
+    let a = app.clone();
+    let on_open_course: ui::Callback = Arc::new(move || {
+        let a = a.clone();
+        std::thread::spawn(move || open_course_view(&a));
+    });
+    let a = app.clone();
+    let on_login: ui::Callback = Arc::new(move || {
+        let a = a.clone();
+        std::thread::spawn(move || open_login_window(&a));
+    });
+    let a = app.clone();
+    let on_fetch_now: ui::Callback = Arc::new(move || a.w.trigger_now());
+    let a = app.clone();
+    let on_open_wizard: ui::Callback = Arc::new(move || {
+        let a = a.clone();
+        std::thread::spawn(move || open_wizard(&a));
+    });
+    let a = app.clone();
+    let on_open_config: ui::Callback = Arc::new(move || {
+        let _ = osutil::open_target(&a.p.config_path.to_string_lossy());
+    });
+    let a = app.clone();
+    let on_open_logs: ui::Callback = Arc::new(move || {
+        let _ = osutil::open_folder(&a.p.log_dir.to_string_lossy());
+    });
+
+    let is_auto_start: ui::BoolGetter = Arc::new(autostart::is_enabled);
+    let a = app.clone();
+    let toggle_auto_start: ui::Callback = Arc::new(move || {
+        let actual = autostart::apply(!autostart::is_enabled());
+        let _ = a.store.update(|c| c.behavior.auto_launch_at_login = actual);
+    });
+    let a = app.clone();
+    let is_auto_select: ui::BoolGetter = Arc::new(move || a.store.get().behavior.auto_select);
+    let a = app.clone();
+    let toggle_auto_select: ui::Callback = Arc::new(move || {
+        let _ = a.store.update(|c| c.behavior.auto_select = !c.behavior.auto_select);
+    });
+    let a = app.clone();
+    let on_quit: ui::Callback = Arc::new(move || {
+        let _ = a.client.jar.save();
+        std::process::exit(0);
+    });
+
+    ui::Actions {
+        status_text,
+        status_lines: status_lines_cb,
+        version: VERSION.to_string(),
+        on_open_course,
+        on_login,
+        on_fetch_now,
+        on_open_wizard,
+        on_open_config,
+        on_open_logs,
+        is_auto_start,
+        toggle_auto_start,
+        is_auto_select,
+        toggle_auto_select,
+        on_quit,
+    }
+}
+
+fn build_wizard_actions(app: &Arc<App>) -> wizard::Actions {
+    let p = app.p.clone();
+
+    let a = app.clone();
+    let status: Box<dyn Fn() -> wizard::Status + Send + Sync> = Box::new(move || {
+        let cfg = a.store.get();
+        let s = a.w.status();
+        let st = a.st.get();
+        wizard::Status {
+            first_run_completed: st.first_run_completed,
+            credentials_configured: cfg.has_credentials(),
+            pushplus_configured: !cfg.push.pushplus.token.is_empty(),
+            windows_notify_enabled: cfg.push.windows.enabled,
+            auth_state: st.auth_state.as_str().to_string(),
+            watcher_message: s.last_message,
+            last_success_at: s.last_success_at,
+            auto_start_enabled: autostart::is_enabled(),
+            auto_select_enabled: cfg.behavior.auto_select,
+            filters_configured: !cfg.filters.locations.is_empty()
+                || !cfg.filters.categories.is_empty(),
+            config_path: p.config_path.to_string_lossy().into_owned(),
+            data_dir: p.data_dir.to_string_lossy().into_owned(),
+            version: VERSION.to_string(),
+        }
+    });
+
+    let a = app.clone();
+    let cfg_view: Box<dyn Fn() -> wizard::ConfigView + Send + Sync> = Box::new(move || {
+        let cfg = a.store.get();
+        wizard::ConfigView {
+            username: cfg.credentials.username.clone(),
+            password: cfg.credentials.password.clone(),
+            pushplus_token: cfg.push.pushplus.token.clone(),
+            pushplus_enabled: cfg.push.pushplus.enabled,
+            windows_notify_enabled: cfg.push.windows.enabled,
+            auto_launch_at_login: cfg.behavior.auto_launch_at_login,
+            auto_select: cfg.behavior.auto_select,
+            locations: cfg.filters.locations.clone(),
+            categories: cfg.filters.categories.clone(),
+        }
+    });
+
+    let a = app.clone();
+    let verify: Box<dyn Fn() -> (String, String) + Send + Sync> = Box::new(move || {
+        match site::check(&a.client) {
+            Ok(probe) => match probe.verdict {
+                site::Verdict::Courses => ("valid".to_string(), probe.reason),
+                site::Verdict::Login => ("expired".to_string(), probe.reason),
+                site::Verdict::Unknown => ("unknown".to_string(), probe.reason),
+            },
+            Err(e) => ("unknown".to_string(), format!("请求失败: {}", e)),
+        }
+    });
+
+    let a = app.clone();
+    let save_account: Box<dyn Fn(&str, &str) -> Result<()> + Send + Sync> =
+        Box::new(move |username: &str, password: &str| {
+            a.store.update(|c| {
+                c.credentials.username = username.to_string();
+                c.credentials.password = password.to_string();
+            })
+        });
+
+    let a = app.clone();
+    let save_filters: Box<dyn Fn(&[String], &[String]) -> Result<()> + Send + Sync> =
+        Box::new(move |locations: &[String], categories: &[String]| {
+            a.store.update(|c| {
+                c.filters.locations = locations.to_vec();
+                c.filters.categories = categories.to_vec();
+            })
+        });
+
+    let a = app.clone();
+    let save_notify: Box<dyn Fn(&str, bool, bool) -> Result<()> + Send + Sync> =
+        Box::new(move |token: &str, pp: bool, wn: bool| {
+            a.store.update(|c| {
+                c.push.pushplus.token = token.to_string();
+                c.push.pushplus.enabled = pp && !token.is_empty();
+                c.push.windows.enabled = wn;
+            })
+        });
+
+    let a = app.clone();
+    let set_behavior: Box<dyn Fn(Option<bool>, Option<bool>) -> Result<()> + Send + Sync> =
+        Box::new(move |auto_start: Option<bool>, auto_select: Option<bool>| {
+            if let Some(v) = auto_start {
+                let actual = autostart::apply(v);
+                a.store
+                    .update(|c| c.behavior.auto_launch_at_login = actual)?;
+            }
+            if let Some(v) = auto_select {
+                a.store.update(|c| c.behavior.auto_select = v)?;
+            }
+            Ok(())
+        });
+
+    let a = app.clone();
+    let open_login: Box<dyn Fn() + Send + Sync> = Box::new(move || {
+        let a = a.clone();
+        std::thread::spawn(move || open_login_window(&a));
+    });
+    let a = app.clone();
+    let open_course: Box<dyn Fn() + Send + Sync> = Box::new(move || {
+        let a = a.clone();
+        std::thread::spawn(move || open_course_view(&a));
+    });
+    let a = app.clone();
+    let open_config: Box<dyn Fn() + Send + Sync> =
+        Box::new(move || {
+            let _ = osutil::open_target(&a.p.config_path.to_string_lossy());
+        });
+    let a = app.clone();
+    let open_logs: Box<dyn Fn() + Send + Sync> =
+        Box::new(move || {
+            let _ = osutil::open_folder(&a.p.log_dir.to_string_lossy());
+        });
+    let open_external: Box<dyn Fn(&str) -> Result<()> + Send + Sync> =
+        Box::new(|url: &str| osutil::open_url(url));
+
+    wizard::Actions {
+        status,
+        config: cfg_view,
+        verify,
+        save_account,
+        save_filters,
+        save_notify,
+        set_behavior,
+        open_login,
+        open_course,
+        open_config,
+        open_logs,
+        open_external,
+    }
+}
+
+fn run_login(
+    p: &paths::Paths,
+    store: &Arc<config::Store>,
+    client: &Arc<Client>,
+    st: &Arc<state::Store>,
+    log: &Logger,
+) -> Result<()> {
+    let cfg = store.get();
+    let exe = cfg.browser_path().map(str::to_string);
+    let cred = cfg.credentials;
+    let profile = p
+        .data_dir
+        .join("browser-profile")
+        .to_string_lossy()
+        .into_owned();
+    let cookies = login::run(&login::LoginOptions {
+        url: session::CAS_LOGIN,
+        profile_dir: &profile,
+        timeout: Duration::from_secs(300),
+        poll_interval: Duration::from_secs(3),
+        username: &cred.username,
+        password: &cred.password,
+        exec_path: exe.as_deref(),
+        log,
+    })?;
+
+    client.jar.set_stored(&cookies);
+    client.jar.save()?;
+    let _ = st.update(|s| {
+        s.first_run_completed = true;
+        s.auth_state = state::AuthState::Valid;
+    });
+    log.info("登录态已保存,后台现在可以直接轮询");
+    Ok(())
+}
+
+fn run_wizard_ui(url: &str, data_path: &str) -> Result<()> {
+    let data = if data_path.is_empty() {
+        std::env::temp_dir()
+            .join("seu-labor-wizard-webview")
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        data_path.to_string()
+    };
+    let url = if url.is_empty() { "about:blank" } else { url };
+    // The window is created in physical pixels, so scale the logical design
+    // dimensions by the display DPI (matching the previous implementation).
+    let scale = osutil::dpi_scale();
+    let dim = |v: i32| ((v as f64) * scale).round() as i32;
+    let opts = appwindow::Options {
+        title: "SEU 劳动教育课程推送助手 设置".to_string(),
+        width: dim(980),
+        height: dim(720),
+        min_width: dim(860),
+        min_height: dim(640),
+        data_path: data,
+    };
+    let win = appwindow::open(url, &opts)?;
+    win.run()?;
+    Ok(())
+}

@@ -34,5 +34,8 @@
   "logging": {
     "level": "info",
     "retentionDays": 7
+  },
+  "browser": {
+    "path": ""
   }
 }

@@ -1,0 +1,51 @@
+[package]
+name = "seu-labor"
+version = "1.1.1"
+edition = "2021"
+description = "SEU 劳动教育课程推送助手"
+license = "MIT"
+
+[[bin]]
+name = "seu-labor"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+cookie = "0.18"
+regex = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+scraper = "0.20"
+url = "2"
+percent-encoding = "2"
+base64 = "0.22"
+rand = "0.8"
+rsa = "0.9"
+pkcs8 = "0.10"
+ureq = { version = "2.10", default-features = false, features = ["native-tls", "json"] }
+tungstenite = { version = "0.24", default-features = false, features = ["native-tls", "handshake"] }
+tauri-winrt-notification = "0.2"
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Dwm",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_System_SystemServices",
+    "Win32_System_Com",
+    "Win32_System_Diagnostics_ToolHelp",
+] }
+webview2-com = "0.37"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

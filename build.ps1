@@ -1,5 +1,5 @@
-# Builds a single self-contained Windows executable.
-# The tray, toast and autostart implementations are pure Go, so CGO is off.
+# Builds a single self-contained Windows executable with Cargo.
+# Toolchain: x86_64-pc-windows-gnu (rustup), no MSVC / CGO equivalent needed.
 param(
     [string]$Version = "1.1.1",
     [string]$Output = "release"
@@ -7,23 +7,23 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$go = (Get-Command go -ErrorAction SilentlyContinue).Source
-if (-not $go) {
-    $go = @(
-        (Join-Path $env:ProgramFiles "Go\bin\go.exe"),
-        (Join-Path $env:LOCALAPPDATA "Programs\Go\bin\go.exe"),
-        "C:\Go\bin\go.exe"
-    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+$cargo = (Get-Command cargo -ErrorAction SilentlyContinue).Source
+if (-not $cargo) {
+    $candidate = Join-Path $env:USERPROFILE ".cargo\bin\cargo.exe"
+    if (Test-Path $candidate) { $cargo = $candidate }
 }
-if (-not $go) {
-    throw "未找到 go，请安装 Go 1.24+ 或将其加入 PATH。"
+if (-not $cargo) {
+    throw "未找到 cargo，请安装 Rust(https://rustup.rs) 或将其加入 PATH。"
 }
 
-$env:CGO_ENABLED = "0"
+$env:SEU_LABOR_VERSION = $Version
 New-Item -ItemType Directory -Path $Output -Force | Out-Null
 
-# -H=windowsgui: GUI subsystem, so the resident app shows no console window.
-& $go build -trimpath -ldflags "-s -w -H=windowsgui -X main.version=$Version" -o "$Output\seu-labor.exe" ./cmd/seu-labor
+Write-Host "==> cargo build --release"
+& $cargo build --release
+if ($LASTEXITCODE -ne 0) { throw "cargo build 失败(退出码 $LASTEXITCODE)" }
 
-$size = "{0:N2} MB" -f ((Get-Item "$Output\seu-labor.exe").Length / 1MB)
+Copy-Item "target\release\seu-labor.exe" (Join-Path $Output "seu-labor.exe") -Force
+Copy-Item "vendor\WebView2Loader.dll" (Join-Path $Output "WebView2Loader.dll") -Force
+$size = "{0:N2} MB" -f ((Get-Item (Join-Path $Output "seu-labor.exe")).Length / 1MB)
 Write-Host "built $Output\seu-labor.exe ($size)"

@@ -1,4 +1,5 @@
 # build output
+/target/
 /bin/
 /dist/
 /release/

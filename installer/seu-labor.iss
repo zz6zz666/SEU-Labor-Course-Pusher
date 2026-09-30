@@ -52,6 +52,7 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 
 [Files]
 Source: "..\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\release\WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#MyAppShortName}"; Filename: "{app}\{#MyAppExeName}"

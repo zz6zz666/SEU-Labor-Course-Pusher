@@ -6,7 +6,7 @@ $Root = Join-Path $env:LOCALAPPDATA "Programs\$AppName"
 
 Get-Process seu-labor | Stop-Process -Force
 Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" |
-    Where-Object { $_.CommandLine -match 'browser-profile|wizard-profile' } |
+    Where-Object { $_.CommandLine -match 'browser-profile|wizard-webview' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
 Remove-Item (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\$AppName.lnk") -Force
