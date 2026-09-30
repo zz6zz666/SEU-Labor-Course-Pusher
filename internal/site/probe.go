@@ -38,7 +38,7 @@ var loginMarkers = []string{
 func Check(ctx context.Context, client *session.Client) (Probe, error) {
 	res, err := client.Get(ctx, session.CoursePage)
 	if err != nil {
-		return Probe{Verdict: VerdictUnknown, Reason: "请求失败: " + err.Error()}, nil
+		return Probe{Verdict: VerdictUnknown, Reason: "请求失败: " + err.Error()}, err
 	}
 	if hasCourseTable(res.Body) {
 		return Probe{Verdict: VerdictCourses, Reason: "返回选课表格", HTML: res.Body}, nil

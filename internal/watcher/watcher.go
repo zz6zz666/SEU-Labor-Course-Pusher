@@ -117,7 +117,7 @@ func (w *Watcher) Tick(ctx context.Context) {
 
 	probe, err := site.Check(ctx, w.client)
 	if err != nil {
-		w.fail(ctx, "请求失败: "+err.Error())
+		w.failNetwork(err)
 		return
 	}
 
@@ -318,6 +318,19 @@ func (w *Watcher) fail(ctx context.Context, detail string) {
 	w.status.LastMessage = detail
 }
 
+// failNetwork records a transport-level failure (no route/DNS yet, timeout).
+// It is transient by nature — most often the autostart instance racing the
+// network at logon — so it retries quickly (see nextDelay) and never alerts,
+// instead of backing off for minutes and flashing a raw error in the tray.
+func (w *Watcher) failNetwork(err error) {
+	w.failures++
+	w.log.Warn("网络暂不可用,稍后重试:", err)
+	_ = w.state.Update(func(s *state.State) { s.ConsecutiveFailures = w.failures })
+	w.status.LastVerdict = "network"
+	w.status.Failures = w.failures
+	w.status.LastMessage = "网络未就绪,正在重试"
+}
+
 func (w *Watcher) maybeSummary(ctx context.Context) {
 	cfg := w.store.Get()
 	if cfg.Schedule.DailySummaryHour == nil {
@@ -347,6 +360,15 @@ func (w *Watcher) maybeSummary(ctx context.Context) {
 }
 
 func (w *Watcher) nextDelay() time.Duration {
+	if w.status.LastVerdict == "network" {
+		// Transient connectivity trouble: come back quickly, ramping gently so
+		// a prolonged outage does not hammer the network.
+		d := time.Duration(20+(w.failures-1)*15) * time.Second
+		if d > 2*time.Minute {
+			d = 2 * time.Minute
+		}
+		return d
+	}
 	cfg := w.store.Get().Schedule
 	base := float64(cfg.RefreshIntervalMS)
 	if w.failures > 0 {
