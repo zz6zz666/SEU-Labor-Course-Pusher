@@ -1,7 +1,7 @@
 [package]
 name = "seu-labor"
-version = "1.1.1"
-edition = "2021"
+version = "1.2.0"
+edition = "2024"
 description = "SEU 劳动教育课程推送助手"
 license = "MIT"
 
@@ -38,8 +38,12 @@ windows = { version = "0.61", features = [
     "Win32_System_Registry",
     "Win32_System_Threading",
     "Win32_System_SystemServices",
+    "Win32_System_SystemInformation",
     "Win32_System_Com",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_Security",
+    "Win32_UI_Controls",
+    "Win32_Storage_FileSystem",
 ] }
 webview2-com = "0.37"
 

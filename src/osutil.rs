@@ -4,6 +4,13 @@
 use std::process::Command;
 
 use anyhow::{anyhow, Result};
+use windows::core::PCWSTR;
+use windows::Win32::UI::HiDpi::{
+    GetDpiForSystem, SetProcessDpiAwareness, SetProcessDpiAwarenessContext,
+    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, PROCESS_DPI_AWARENESS,
+};
+use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
+use windows::Win32::UI::WindowsAndMessaging::SetProcessDPIAware;
 
 pub const APP_APP_USER_MODEL_ID: &str = "SEU.Labor.Pusher";
 
@@ -46,28 +53,12 @@ fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-#[link(name = "shell32")]
-extern "system" {
-    fn SetCurrentProcessExplicitAppUserModelID(app_id: *const u16) -> i32;
-}
-
 /// Sets the process AppUserModelID, required for desktop toast notifications to
 /// be attributed to this app.
 pub fn set_app_user_model_id(id: &str) -> Result<()> {
     let w = to_wide(id);
-    let r = unsafe { SetCurrentProcessExplicitAppUserModelID(w.as_ptr()) };
-    if r == 0 {
-        Ok(())
-    } else {
-        Err(anyhow!("设置 AppUserModelID 失败(HRESULT {:#x})", r))
-    }
-}
-
-#[link(name = "user32")]
-extern "system" {
-    fn SetProcessDpiAwarenessContext(ctx: isize) -> i32;
-    fn SetProcessDPIAware() -> i32;
-    fn GetDpiForSystem() -> u32;
+    unsafe { SetCurrentProcessExplicitAppUserModelID(PCWSTR(w.as_ptr())) }
+        .map_err(|e| anyhow!("设置 AppUserModelID 失败: {e}"))
 }
 
 /// Reports the primary display scale factor (1.0 == 96 DPI).
@@ -80,22 +71,14 @@ pub fn dpi_scale() -> f64 {
     }
 }
 
-#[link(name = "shcore")]
-extern "system" {
-    fn SetProcessDpiAwareness(value: i32) -> i32;
-}
-
-const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: isize = -4;
-
 /// Opts the process into Per-Monitor V2 DPI awareness so windows render crisply
 /// on scaled (high-DPI) displays. Must be called before any window is created.
 pub fn enable_per_monitor_dpi() {
     unsafe {
-        if SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) != 0 {
+        if SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2).is_ok() {
             return;
         }
-        // PROCESS_PER_MONITOR_DPI_AWARE = 2 (Windows 8.1+)
-        if SetProcessDpiAwareness(2) == 0 {
+        if SetProcessDpiAwareness(PROCESS_DPI_AWARENESS(2)).is_ok() {
             return;
         }
         let _ = SetProcessDPIAware();

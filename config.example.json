@@ -4,8 +4,8 @@
     "password": ""
   },
   "filters": {
-    "locations": [],
-    "categories": []
+    "locationWhitelist": [],
+    "categoryBlacklist": []
   },
   "schedule": {
     "refreshIntervalMs": 180000,

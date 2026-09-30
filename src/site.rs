@@ -40,23 +40,23 @@ impl Course {
     }
 }
 
-/// Mirrors the config semantics: locations is a substring whitelist, categories
-/// is an exact-match blacklist.
+/// Mirrors the config semantics: `location_whitelist` is a substring whitelist,
+/// `category_blacklist` is an exact-match blacklist.
 #[derive(Clone, Default)]
 pub struct FilterOptions {
-    pub locations: Vec<String>,
-    pub categories: Vec<String>,
+    pub location_whitelist: Vec<String>,
+    pub category_blacklist: Vec<String>,
 }
 
 impl FilterOptions {
     fn match_location(&self, loc: &str) -> bool {
-        if self.locations.is_empty() {
+        if self.location_whitelist.is_empty() {
             return true;
         }
-        self.locations.iter().any(|kw| loc.contains(kw))
+        self.location_whitelist.iter().any(|kw| loc.contains(kw))
     }
     fn match_category(&self, cat: &str) -> bool {
-        !self.categories.iter().any(|black| cat == black)
+        !self.category_blacklist.iter().any(|black| cat == black)
     }
 }
 

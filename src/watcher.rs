@@ -195,8 +195,8 @@ impl Watcher {
         let result = site::parse(
             page_html,
             &site::FilterOptions {
-                locations: cfg.filters.locations.clone(),
-                categories: cfg.filters.categories.clone(),
+                location_whitelist: cfg.filters.location_whitelist.clone(),
+                category_blacklist: cfg.filters.category_blacklist.clone(),
             },
         );
 

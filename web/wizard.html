@@ -581,13 +581,13 @@
 
       /** 从 config 反推「想接收的类别」:黑名单之外的都算想要 —— 用于回填/展示 */
       function chosenCategories() {
-        const blacklist = (state.config && state.config.categories) || [];
+        const blacklist = (state.config && state.config.categoryBlacklist) || [];
         return LABOR_TYPES.filter((t) => blacklist.indexOf(t) < 0);
       }
 
       function filtersText() {
         const cfg = state.config || {};
-        const locs = cfg.locations || [];
+        const locs = cfg.locationWhitelist || [];
         const chosen = chosenCategories();
         const parts = [];
         if (locs.length) parts.push('地点 ' + locs.join('/'));
@@ -598,7 +598,7 @@
       function renderSummary() {
         const s = state.status || {};
         const cfg = state.config || {};
-        const filtered = (cfg.locations || []).length > 0 || (cfg.categories || []).length > 0;
+        const filtered = (cfg.locationWhitelist || []).length > 0 || (cfg.categoryBlacklist || []).length > 0;
         const rows = [
           ['账号', s.credentialsConfigured ? '已填写' : '未填写', s.credentialsConfigured ? 'ok' : 'warn'],
           ['筛选', filtersText(), filtered ? 'ok' : 'idle'],
@@ -640,8 +640,8 @@
           $('in-password').value = state.config.password || '';
           state.token = state.config.pushplusToken || '';
           $('in-token').value = maskToken(state.token);
-          $('in-locations').value = (state.config.locations || []).join('，');
-          const blacklist = state.config.categories || [];
+          $('in-locations').value = (state.config.locationWhitelist || []).join('，');
+          const blacklist = state.config.categoryBlacklist || [];
           document.querySelectorAll('#chips-categories input').forEach((el) => {
             el.checked = blacklist.indexOf(el.value) < 0;
           });
@@ -687,7 +687,7 @@
           const allChosen = chosen.length === LABOR_TYPES.length || chosen.length === 0;
           const categories = allChosen ? [] : LABOR_TYPES.filter((t) => chosen.indexOf(t) < 0);
           const err = $('err-filters');
-          const res = await window.seuWizard.saveFilters({ locations, categories });
+          const res = await window.seuWizard.saveFilters({ locationWhitelist: locations, categoryBlacklist: categories });
           if (!res.ok) {
             err.textContent = '保存失败：' + (res.error || '未知错误');
             err.hidden = false;

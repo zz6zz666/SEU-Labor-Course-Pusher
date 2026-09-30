@@ -1,7 +1,8 @@
 //! On-disk configuration schema and a store that loads, validates and persists
-//! it. The JSON layout matches the previous Go implementation byte for byte
-//! (field order, 2-space indent, camelCase keys) so existing installs migrate
-//! seamlessly.
+//! it. The JSON layout mirrors the previous Go implementation (field order,
+//! 2-space indent, camelCase keys) so existing installs keep working. The
+//! `filters` keys were renamed to spell out which list is a whitelist and which
+//! is a blacklist; the old names are still accepted on read.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -17,13 +18,17 @@ pub struct Credentials {
     pub password: String,
 }
 
-/// Filters: `locations` is a keyword whitelist (substring), `categories` is a
-/// blacklist (exact match).
+/// Filters. `location_whitelist` keeps a course whose 开课地点 contains any
+/// keyword (substring whitelist); `category_blacklist` drops a course whose
+/// 项目类别 exactly matches any keyword (blacklist). An empty list means no
+/// filtering for that dimension.
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Filters {
-    pub locations: Vec<String>,
-    pub categories: Vec<String>,
+    #[serde(rename = "locationWhitelist", alias = "locations")]
+    pub location_whitelist: Vec<String>,
+    #[serde(rename = "categoryBlacklist", alias = "categories")]
+    pub category_blacklist: Vec<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -217,8 +222,8 @@ impl Config {
     pub fn safe_summary(&self) -> serde_json::Value {
         serde_json::json!({
             "usernameConfigured": !self.credentials.username.is_empty(),
-            "locations": self.filters.locations,
-            "categories": self.filters.categories,
+            "locationWhitelist": self.filters.location_whitelist,
+            "categoryBlacklist": self.filters.category_blacklist,
             "refreshIntervalMs": self.schedule.refresh_interval_ms,
             "dailySummaryHour": self.schedule.daily_summary_hour,
             "pushplusEnabled": self.push.pushplus.enabled,

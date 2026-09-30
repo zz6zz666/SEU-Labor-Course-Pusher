@@ -227,11 +227,20 @@ fn client_size(hwnd: HWND) -> (i32, i32) {
 
 fn set_window_icon(hwnd: HWND) {
     let icon = unsafe { crate::ui::winapi::create_icon_from_ico(assets::ICON_ICO, 32) };
-    if icon != 0 {
-        let h = hwnd.0 as isize;
+    if !icon.0.is_null() {
         unsafe {
-            crate::ui::winapi::SendMessageW(h, WM_SETICON, ICON_BIG as usize, icon);
-            crate::ui::winapi::SendMessageW(h, WM_SETICON, ICON_SMALL as usize, icon);
+            let _ = SendMessageW(
+                hwnd,
+                WM_SETICON,
+                Some(WPARAM(ICON_BIG as usize)),
+                Some(LPARAM(icon.0 as isize)),
+            );
+            let _ = SendMessageW(
+                hwnd,
+                WM_SETICON,
+                Some(WPARAM(ICON_SMALL as usize)),
+                Some(LPARAM(icon.0 as isize)),
+            );
         }
     }
 }

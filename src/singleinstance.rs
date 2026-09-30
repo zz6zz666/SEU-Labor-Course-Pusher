@@ -1,37 +1,23 @@
 //! Ensures only one resident process runs, and lets a second launch ask the
 //! running one to show its wizard.
 
-use std::ffi::c_void;
+use windows::core::PCWSTR;
+use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
+use windows::Win32::System::Threading::{
+    CreateEventW, CreateMutexW, OpenEventW, SetEvent, WaitForSingleObject, EVENT_MODIFY_STATE,
+    INFINITE,
+};
 
 const MUTEX_NAME: &str = r"Local\SEULaborPusher";
 const EVENT_NAME: &str = r"Local\SEULaborPusher_ShowWizard";
-const ERROR_ALREADY_EXISTS: u32 = 183;
-const EVENT_MODIFY_STATE: u32 = 0x0002;
-const INFINITE: u32 = 0xFFFF_FFFF;
-
-#[link(name = "kernel32")]
-extern "system" {
-    fn CreateMutexW(sa: *mut c_void, initial_owner: i32, name: *const u16) -> isize;
-    fn CreateEventW(
-        sa: *mut c_void,
-        manual_reset: i32,
-        initial_state: i32,
-        name: *const u16,
-    ) -> isize;
-    fn OpenEventW(access: u32, inherit: i32, name: *const u16) -> isize;
-    fn SetEvent(handle: isize) -> i32;
-    fn WaitForSingleObject(handle: isize, ms: u32) -> u32;
-    fn CloseHandle(handle: isize) -> i32;
-    fn GetLastError() -> u32;
-}
 
 fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 pub struct Instance {
-    mutex: isize,
-    event: isize,
+    mutex: HANDLE,
+    event: HANDLE,
 }
 
 unsafe impl Send for Instance {}
@@ -40,29 +26,33 @@ unsafe impl Send for Instance {}
 /// it (and the caller should signal and exit).
 pub fn acquire() -> (Option<Instance>, bool) {
     let name = to_wide(MUTEX_NAME);
-    let mutex = unsafe { CreateMutexW(std::ptr::null_mut(), 0, name.as_ptr()) };
-    if mutex == 0 {
+    let Ok(mutex) = (unsafe { CreateMutexW(None, false, PCWSTR(name.as_ptr())) }) else {
         return (None, false);
-    }
+    };
     if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
-        unsafe { CloseHandle(mutex) };
+        unsafe {
+            let _ = CloseHandle(mutex);
+        }
         return (None, true);
     }
 
     let ev_name = to_wide(EVENT_NAME);
-    let event = unsafe { CreateEventW(std::ptr::null_mut(), 0, 0, ev_name.as_ptr()) };
+    let event =
+        unsafe { CreateEventW(None, false, false, PCWSTR(ev_name.as_ptr())) }.unwrap_or_default();
     (Some(Instance { mutex, event }), false)
 }
 
 /// Wakes the running instance's wizard request.
 pub fn signal_existing() -> bool {
     let name = to_wide(EVENT_NAME);
-    let event = unsafe { OpenEventW(EVENT_MODIFY_STATE, 0, name.as_ptr()) };
-    if event == 0 {
+    let Ok(event) = (unsafe { OpenEventW(EVENT_MODIFY_STATE, false, PCWSTR(name.as_ptr())) })
+    else {
         return false;
+    };
+    let ok = unsafe { SetEvent(event) }.is_ok();
+    unsafe {
+        let _ = CloseHandle(event);
     }
-    let ok = unsafe { SetEvent(event) } != 0;
-    unsafe { CloseHandle(event) };
     ok
 }
 
@@ -78,11 +68,11 @@ impl Instance {
 impl Drop for Instance {
     fn drop(&mut self) {
         unsafe {
-            if self.event != 0 {
-                CloseHandle(self.event);
+            if !self.event.0.is_null() {
+                let _ = CloseHandle(self.event);
             }
-            if self.mutex != 0 {
-                CloseHandle(self.mutex);
+            if !self.mutex.0.is_null() {
+                let _ = CloseHandle(self.mutex);
             }
         }
     }

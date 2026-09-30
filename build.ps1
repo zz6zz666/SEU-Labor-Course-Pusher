@@ -1,7 +1,7 @@
 # Builds a single self-contained Windows executable with Cargo.
 # Toolchain: x86_64-pc-windows-gnu (rustup), no MSVC / CGO equivalent needed.
 param(
-    [string]$Version = "1.1.1",
+    [string]$Version = "1.2.0",
     [string]$Output = "release"
 )
 

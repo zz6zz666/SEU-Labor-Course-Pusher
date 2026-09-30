@@ -614,8 +614,8 @@ fn build_wizard_actions(app: &Arc<App>) -> wizard::Actions {
             last_success_at: s.last_success_at,
             auto_start_enabled: autostart::is_enabled(),
             auto_select_enabled: cfg.behavior.auto_select,
-            filters_configured: !cfg.filters.locations.is_empty()
-                || !cfg.filters.categories.is_empty(),
+            filters_configured: !cfg.filters.location_whitelist.is_empty()
+                || !cfg.filters.category_blacklist.is_empty(),
             config_path: p.config_path.to_string_lossy().into_owned(),
             data_dir: p.data_dir.to_string_lossy().into_owned(),
             version: VERSION.to_string(),
@@ -633,8 +633,8 @@ fn build_wizard_actions(app: &Arc<App>) -> wizard::Actions {
             windows_notify_enabled: cfg.push.windows.enabled,
             auto_launch_at_login: cfg.behavior.auto_launch_at_login,
             auto_select: cfg.behavior.auto_select,
-            locations: cfg.filters.locations.clone(),
-            categories: cfg.filters.categories.clone(),
+            location_whitelist: cfg.filters.location_whitelist.clone(),
+            category_blacklist: cfg.filters.category_blacklist.clone(),
         }
     });
 
@@ -661,10 +661,10 @@ fn build_wizard_actions(app: &Arc<App>) -> wizard::Actions {
 
     let a = app.clone();
     let save_filters: Box<dyn Fn(&[String], &[String]) -> Result<()> + Send + Sync> =
-        Box::new(move |locations: &[String], categories: &[String]| {
+        Box::new(move |location_whitelist: &[String], category_blacklist: &[String]| {
             a.store.update(|c| {
-                c.filters.locations = locations.to_vec();
-                c.filters.categories = categories.to_vec();
+                c.filters.location_whitelist = location_whitelist.to_vec();
+                c.filters.category_blacklist = category_blacklist.to_vec();
             })
         });
 

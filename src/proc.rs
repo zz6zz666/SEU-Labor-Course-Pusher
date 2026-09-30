@@ -5,21 +5,16 @@
 use std::path::Path;
 use std::sync::Arc;
 
-const SYNCHRONIZE: u32 = 0x0010_0000;
-const PROCESS_TERMINATE: u32 = 0x0001;
-const INFINITE: u32 = 0xFFFF_FFFF;
-
-#[link(name = "kernel32")]
-extern "system" {
-    fn OpenProcess(access: u32, inherit: i32, pid: u32) -> isize;
-    fn TerminateProcess(handle: isize, code: u32) -> i32;
-    fn WaitForSingleObject(handle: isize, ms: u32) -> u32;
-    fn CloseHandle(handle: isize) -> i32;
-}
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Storage::FileSystem::SYNCHRONIZE;
+use windows::Win32::System::Threading::{
+    OpenProcess, TerminateProcess, WaitForSingleObject, INFINITE, PROCESS_ACCESS_RIGHTS,
+    PROCESS_TERMINATE,
+};
 
 struct Inner {
     pid: u32,
-    handle: isize,
+    handle: HANDLE,
 }
 
 unsafe impl Send for Inner {}
@@ -27,9 +22,9 @@ unsafe impl Sync for Inner {}
 
 impl Drop for Inner {
     fn drop(&mut self) {
-        if self.handle != 0 {
+        if !self.handle.0.is_null() {
             unsafe {
-                CloseHandle(self.handle);
+                let _ = CloseHandle(self.handle);
             }
         }
     }
@@ -46,15 +41,15 @@ impl ChildProc {
     }
 
     pub fn kill(&self) {
-        if self.inner.handle != 0 {
+        if !self.inner.handle.0.is_null() {
             unsafe {
-                TerminateProcess(self.inner.handle, 1);
+                let _ = TerminateProcess(self.inner.handle, 1);
             }
         }
     }
 
     pub fn wait(&self) {
-        if self.inner.handle != 0 {
+        if !self.inner.handle.0.is_null() {
             unsafe {
                 WaitForSingleObject(self.inner.handle, INFINITE);
             }
@@ -73,7 +68,10 @@ pub fn spawn(exe: &Path, args: &[String]) -> std::io::Result<ChildProc> {
     let child = cmd.spawn()?;
     let pid = child.id();
     drop(child);
-    let handle = unsafe { OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, 0, pid) };
+    // `OpenProcess` wants PROCESS_ACCESS_RIGHTS; SYNCHRONIZE is a shared
+    // standard right, so merge the two raw bit masks.
+    let access = PROCESS_ACCESS_RIGHTS(SYNCHRONIZE.0 | PROCESS_TERMINATE.0);
+    let handle = unsafe { OpenProcess(access, false, pid) }.unwrap_or_default();
     Ok(ChildProc {
         inner: Arc::new(Inner { pid, handle }),
     })

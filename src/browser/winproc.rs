@@ -17,7 +17,7 @@ use windows::Win32::System::Threading::{
 use super::discovery::is_browser_exe;
 
 #[link(name = "ntdll")]
-extern "system" {
+unsafe extern "system" {
     fn NtQueryInformationProcess(
         process: HANDLE,
         class: u32,
@@ -65,7 +65,7 @@ pub fn kill_browsers_for_profile(dir: &str) {
     }
 }
 
-unsafe fn command_line(pid: u32) -> Option<String> {
+unsafe fn command_line(pid: u32) -> Option<String> { unsafe {
     let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
     let mut size: u32 = 0;
     // First probe to learn the required buffer size.
@@ -105,14 +105,14 @@ unsafe fn command_line(pid: u32) -> Option<String> {
     };
     let _ = CloseHandle(handle);
     result
-}
+}}
 
-unsafe fn terminate(pid: u32) {
+unsafe fn terminate(pid: u32) { unsafe {
     if let Ok(handle) = OpenProcess(PROCESS_TERMINATE, false, pid) {
         let _ = TerminateProcess(handle, 1);
         let _ = CloseHandle(handle);
     }
-}
+}}
 
 fn wide_field(buf: &[u16]) -> String {
     let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());

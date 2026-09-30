@@ -1,7 +1,7 @@
 # Builds the app and compiles a single-file setup.exe with Inno Setup 6.
 # Output: release\seu-labor-setup-<version>.exe
 param(
-    [string]$Version = "1.1.1",
+    [string]$Version = "1.2.0",
     [string]$Output = "release"
 )
 

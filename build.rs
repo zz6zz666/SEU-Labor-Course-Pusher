@@ -14,7 +14,8 @@ fn main() {
         return;
     }
 
-    let version = std::env::var("SEU_LABOR_VERSION").unwrap_or_else(|_| "1.1.1".to_string());
+    let version =
+        std::env::var("SEU_LABOR_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
     let parts: Vec<u32> = version.split('.').map(|x| x.parse().unwrap_or(0)).collect();
     let get = |i: usize| parts.get(i).copied().unwrap_or(0);
     let file_ver = format!("{},{},{},{}", get(0), get(1), get(2), get(3));
@@ -72,13 +73,17 @@ END
         return;
     };
     // windres shells out to gcc for preprocessing; make sure its sibling gcc is
-    // reachable.
-    if let Some(dir) = windres.parent() {
-        let old = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", format!("{};{}", dir.display(), old));
-    }
+    // reachable by prepending the windres directory to the child's PATH.
+    let path = match windres.parent() {
+        Some(dir) => {
+            let old = std::env::var("PATH").unwrap_or_default();
+            format!("{};{}", dir.display(), old)
+        }
+        None => std::env::var("PATH").unwrap_or_default(),
+    };
     let obj = out.join("app.res.o");
     let status = Command::new(&windres)
+        .env("PATH", path)
         .args(["--codepage=65001", "-O", "coff", "-i"])
         .arg(&rc_path)
         .arg("-o")

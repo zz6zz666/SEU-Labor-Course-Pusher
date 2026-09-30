@@ -42,8 +42,8 @@ pub struct ConfigView {
     pub windows_notify_enabled: bool,
     pub auto_launch_at_login: bool,
     pub auto_select: bool,
-    pub locations: Vec<String>,
-    pub categories: Vec<String>,
+    pub location_whitelist: Vec<String>,
+    pub category_blacklist: Vec<String>,
 }
 
 type Callback = Box<dyn Fn() + Send + Sync>;
@@ -192,7 +192,10 @@ fn route(server: &Arc<Server>, method: &str, path: &str, body: &str) -> String {
         }
         ("POST", "/api/save-filters") => {
             let v = parse_body(body);
-            result_response((a.save_filters)(&arr_of(&v, "locations"), &arr_of(&v, "categories")))
+            result_response((a.save_filters)(
+                &arr_of(&v, "locationWhitelist"),
+                &arr_of(&v, "categoryBlacklist"),
+            ))
         }
         ("POST", "/api/save-notify") => {
             let v = parse_body(body);
