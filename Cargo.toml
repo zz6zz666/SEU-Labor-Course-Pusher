@@ -6,35 +6,17 @@ description = "SEU 劳动教育课程推送助手"
 license = "MIT"
 repository = "https://github.com/zz6zz666/SEU-Labor-Course-Pusher"
 
-[workspace]
-members = ["demo", "crates/traykit", "crates/browserhost", "crates/webmsg", "crates/websurface", "crates/winkit"]
-default-members = ["."]
-resolver = "3"
-
-# Shared metadata + dependency versions for the reusable crates, so they cannot
-# drift apart. The root application keeps its own version (1.2.0) above.
-[workspace.package]
-version = "0.1.0"
-edition = "2024"
-license = "MIT"
-repository = "https://github.com/zz6zz666/SEU-Labor-Course-Pusher"
-
-[workspace.dependencies]
-anyhow = "1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-windows = "0.61"
-
 [[bin]]
 name = "seu-labor"
 path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
-browserhost = { path = "crates/browserhost" }
-traykit = { path = "crates/traykit" }
-webmsg = { path = "crates/webmsg" }
-websurface = { path = "crates/websurface" }
+# Reusable Windows/web-UI building blocks live in the sibling `rust-webui-kit`.
+browserhost = { path = "../rust-webui-kit/crates/browserhost" }
+traykit = { path = "../rust-webui-kit/crates/traykit" }
+webmsg = { path = "../rust-webui-kit/crates/webmsg" }
+websurface = { path = "../rust-webui-kit/crates/websurface" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 cookie = "0.18"

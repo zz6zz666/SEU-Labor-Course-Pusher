@@ -14,21 +14,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The reusable Windows/web-UI crates live in a sibling repository that this
+      # one depends on by relative path, so fetch it next to this checkout.
+      # Requires that repository to be reachable (push it before relying on CI).
+      - uses: actions/checkout@v4
+        with:
+          repository: zz6zz666/rust-webui-kit
+          path: ../rust-webui-kit
+
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Check (must be warning-free)
-        run: cargo check --workspace --all-targets --message-format short
+        run: cargo check --all-targets --message-format short
 
       - name: Test
-        run: cargo test --workspace
-
-      - name: Feature combinations
-        run: |
-          cargo check -p websurface --no-default-features --message-format short
-          cargo check -p websurface --no-default-features --features webview2 --message-format short
-          cargo check -p websurface --no-default-features --features borrowed-browser --message-format short
+        run: cargo test
 
       - name: Build
         run: cargo build --release

@@ -1,13 +1,21 @@
 # AGENTS.md
 
-Guidance for working in this repository.
+Guidance for working in this repository: the `seu-labor` desktop app.
 
 ## Layout
 
-A Cargo workspace: the `seu-labor` executable at the root, plus reusable crates
-under `crates/` (`winkit`, `traykit`, `browserhost`, `webmsg`, `websurface`).
-Dependency direction: `seu-labor` → `websurface` → { `webmsg`, `browserhost`,
-`winkit` }; `traykit` → `winkit`.
+A single binary crate at the root (`src/`). The reusable Windows / web-UI
+building blocks it uses live in a **separate** sibling project,
+`../rust-webui-kit` (`winkit`, `traykit`, `browserhost`, `webmsg`,
+`websurface`), and are referenced by relative path. This repo keeps only the
+school-specific flows (`src/login.rs`, `src/login_scripts.rs`, …) and the app
+shell.
+
+If the sibling checkout is missing, clone it next to this repo:
+
+```powershell
+git clone <rust-webui-kit-url> ..\rust-webui-kit
+```
 
 ## Commands
 
@@ -19,11 +27,11 @@ $env:Path = "$env:USERPROFILE\.cargo\bin;" + $env:Path
 
 - Check — must be warning-free:
   ```powershell
-  cargo check --workspace --all-targets --message-format short
+  cargo check --all-targets --message-format short
   ```
 - Unit tests:
   ```powershell
-  cargo test --workspace
+  cargo test
   ```
 - Release build (also copies the exe to `release\`):
   ```powershell
@@ -37,21 +45,18 @@ $env:Path = "$env:USERPROFILE\.cargo\bin;" + $env:Path
   ```powershell
   .\test\smoke.ps1
   ```
-- Feature-combination checks:
-  ```powershell
-  cargo check -p websurface --no-default-features
-  cargo check -p websurface --no-default-features --features webview2
-  cargo check -p websurface --no-default-features --features borrowed-browser
-  ```
+
+Crate-level work (feature combinations, the push self-test, the Orbit demo)
+belongs in `../rust-webui-kit`, which has its own `AGENTS.md`.
 
 ## Conventions
 
 - Do not add comments unless they explain *why*.
-- Reusable crates use English error messages; the `seu-labor` app maps them to
-  Chinese user-facing text (see `browser_error` in `src/main.rs`).
-- Reusable crates must not contain SEU-specific strings or policy; site flows
-  (`src/login.rs`, `src/login_scripts.rs`) stay in the application.
-- Keep `cargo check --workspace --all-targets` at zero warnings.
+- The reusable crates use English error messages; this app maps them to Chinese
+  user-facing text (see `browser_error` in `src/main.rs`).
+- Reusable crates must not contain SEU-specific strings or policy — that code
+  lives here, not in `../rust-webui-kit`.
+- Keep `cargo check --all-targets` at zero warnings.
 
 ## Runtime switches
 

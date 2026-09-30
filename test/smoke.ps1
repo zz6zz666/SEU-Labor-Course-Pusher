@@ -19,6 +19,9 @@ if (-not (Test-Path -LiteralPath $Exe)) {
 }
 $Exe = (Resolve-Path -LiteralPath $Exe).Path
 
+# The reusable crates (and the push self-test example) live in the sibling kit.
+$kitRoot = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) "rust-webui-kit"
+
 $fail = 0
 function Check([string]$Name, [bool]$Ok) {
     if ($Ok) { Write-Host ("PASS  " + $Name) -ForegroundColor Green }
@@ -149,13 +152,14 @@ if (-not $SkipBrowsers) {
     Stop-Apps
     Remove-Item Env:\SEU_WIZARD_ENGINE -ErrorAction SilentlyContinue
 
-    if (Get-Command cargo -ErrorAction SilentlyContinue) {
+    $pushManifest = Join-Path $kitRoot "crates\websurface\Cargo.toml"
+    if ((Get-Command cargo -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $pushManifest)) {
         Write-Host "`n== host push ==" -ForegroundColor Cyan
         # Edge writes its own banner to stderr; don't let that abort the run.
         $prevEap = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         foreach ($engine in @("webview2", "borrowed")) {
-            & cargo run -q -p websurface --example push_selftest -- $engine 2>$null |
+            & cargo run -q --manifest-path $pushManifest --example push_selftest -- $engine 2>$null |
                 ForEach-Object { $_.ToString() }
             Check "push reaches the page ($engine)" ($LASTEXITCODE -eq 0)
         }

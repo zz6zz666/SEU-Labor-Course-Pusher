@@ -794,19 +794,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "orbit-demo"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "browserhost",
- "serde",
- "serde_json",
- "traykit",
- "webmsg",
- "websurface",
-]
-
-[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1718,7 +1705,6 @@ dependencies = [
  "anyhow",
  "browserhost",
  "serde_json",
- "webmsg",
  "webview2-com",
  "windows 0.61.3",
  "winkit",
