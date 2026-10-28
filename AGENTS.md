@@ -1,15 +1,20 @@
 # AGENTS.md
 
-Guidance for working in this repository: the `seu-labor` desktop app.
+Guidance for working in this repository: the `seu-labor` course watcher.
 
 ## Layout
 
-A single binary crate at the root (`src/`). The reusable Windows / web-UI
-building blocks it uses live in a **separate** sibling project,
-`../rust-webui-kit` (`winkit`, `traykit`, `browserhost`, `webmsg`,
-`websurface`), and are referenced by relative path. This repo keeps only the
-school-specific flows (`src/login.rs`, `src/login_scripts.rs`, …) and the app
-shell.
+- `core/` — portable Rust core (`seu-labor-core`): HTTP session/cookie jar, CAS
+  login replay, page parsing, selection, config/state, polling state machine and
+  PushPlus. No Windows or Android APIs.
+- `src/` — Windows desktop shell: tray, WebView2 wizard, Chromium login/course
+  windows, WinRT toast, autostart, single-instance.
+- `android/` — Android shell: `specialUse` foreground service, notifications,
+  WebView login/course pages, settings UI, boot receiver and WorkManager
+  watchdog. It calls the core through `core/src/ffi.rs` (JNI).
+- `../rust-webui-kit` — reusable Windows/web-UI crates (`winkit`, `traykit`,
+  `browserhost`, `webmsg`, `websurface`), referenced by relative path from the
+  desktop shell only.
 
 If the sibling checkout is missing, clone it next to this repo:
 
@@ -30,11 +35,11 @@ $env:Path = "$env:USERPROFILE\.cargo\bin;" + $env:Path
 
 - Check — must be warning-free:
   ```powershell
-  cargo check --all-targets --message-format short
+  cargo check --workspace --all-targets --message-format short
   ```
 - Unit tests:
   ```powershell
-  cargo test
+  cargo test --workspace
   ```
 - Release build (also copies the exe to `release\`):
   ```powershell
@@ -49,6 +54,32 @@ $env:Path = "$env:USERPROFILE\.cargo\bin;" + $env:Path
   .\test\smoke.ps1
   ```
 
+Android (JDK 25, Android SDK Platform 36, Build Tools 36.1.0, NDK
+27.0.12077973, plus the Rust target and `cargo-ndk`):
+
+```powershell
+rustup target add aarch64-linux-android
+cargo install cargo-ndk
+```
+
+Open `android/` in Android Studio, or build from that directory with the
+checked-in Gradle wrapper (Gradle 9.8, AGP 9.4.1, built-in Kotlin):
+
+```powershell
+.\gradlew.bat :app:assembleDebug
+```
+
+Set `ANDROID_HOME` to the SDK location, or let Android Studio create a local,
+uncommitted `android/local.properties` with `sdk.dir`. Do not commit that file.
+The Gradle `cargoBuild` task invokes `cargo ndk` with
+`--profile android_release --no-default-features --features
+rustls,android-ffi` and writes
+`android/app/src/main/jniLibs/arm64-v8a/libseu_labor_core.so`.
+
+The JNI layer is type-checked on the desktop with
+`cargo check -p seu-labor-core --features android-ffi`; CI runs it too, so keep
+it warning-free.
+
 Crate-level work (feature combinations, the push self-test, the Orbit demo)
 belongs in `../rust-webui-kit`, which has its own `AGENTS.md`.
 
@@ -59,7 +90,9 @@ belongs in `../rust-webui-kit`, which has its own `AGENTS.md`.
   user-facing text (see `browser_error` in `src/main.rs`).
 - Reusable crates must not contain SEU-specific strings or policy — that code
   lives here, not in `../rust-webui-kit`.
-- Keep `cargo check --all-targets` at zero warnings.
+- Keep `cargo check --workspace --all-targets` at zero warnings.
+- Keep `core/` platform-neutral: no `windows`, `browserhost`, Android or JNI
+  types outside `#[cfg(feature = "android-ffi")]`.
 
 ## Runtime switches
 

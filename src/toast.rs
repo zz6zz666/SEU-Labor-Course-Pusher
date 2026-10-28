@@ -10,7 +10,7 @@ use crate::assets;
 use crate::config::Store;
 use crate::osutil;
 
-use super::{Channel, Event};
+use crate::notify::{Channel, Event};
 
 pub struct Toast {
     store: Arc<Store>,

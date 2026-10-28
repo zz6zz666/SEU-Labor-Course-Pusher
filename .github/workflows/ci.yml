@@ -37,11 +37,15 @@ jobs:
 
       - name: Check (must be warning-free)
         working-directory: app
-        run: cargo check --all-targets --message-format short
+        run: cargo check --workspace --all-targets --message-format short
 
       - name: Test
         working-directory: app
-        run: cargo test
+        run: cargo test --workspace
+
+      - name: Check Android JNI surface
+        working-directory: app
+        run: cargo check -p seu-labor-core --features android-ffi --message-format short
 
       - name: Build
         working-directory: app

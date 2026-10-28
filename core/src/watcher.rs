@@ -27,6 +27,24 @@ pub struct Status {
     pub last_success_at: String,
 }
 
+impl Status {
+    /// Shape consumed by the Android UI and its ongoing notification.
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut value = serde_json::json!({
+            "lastVerdict": self.last_verdict,
+            "lastMessage": self.last_message,
+            "currentValid": self.current_valid,
+            "pushedToday": self.pushed_today,
+            "failures": self.failures,
+            "lastSuccessAt": self.last_success_at,
+        });
+        if let Some(t) = &self.next_run {
+            value["nextRun"] = serde_json::json!(t.format("%H:%M:%S").to_string());
+        }
+        value
+    }
+}
+
 struct DayStats {
     date: String,
     ticks: i64,
@@ -121,6 +139,15 @@ impl Watcher {
 
     pub fn status(&self) -> Status {
         self.inner.lock().unwrap().status.clone()
+    }
+
+    /// Records the next scheduled poll for the UI. Android drives `tick`
+    /// directly, so it has to publish this piece of `run`'s bookkeeping itself.
+    pub fn mark_next_run(&self, delay: Duration) {
+        let next = chrono::Duration::from_std(delay)
+            .ok()
+            .map(|d| Local::now() + d);
+        self.inner.lock().unwrap().status.next_run = next;
     }
 
     /// Polls until stopped.
@@ -428,7 +455,7 @@ impl Watcher {
         let _ = self.state.update(|s| s.last_summary_date = today_str);
     }
 
-    fn next_delay(&self) -> Duration {
+    pub fn next_delay(&self) -> Duration {
         let (last_verdict, failures) = {
             let g = self.inner.lock().unwrap();
             (g.status.last_verdict.clone(), g.failures)

@@ -288,6 +288,14 @@ impl Store {
         Ok(())
     }
 
+    /// Replaces the whole config (Android settings save one JSON blob).
+    pub fn replace(&self, mut cfg: Config) -> anyhow::Result<Vec<String>> {
+        let warnings = cfg.normalize();
+        write_file(&self.path, &cfg)?;
+        *self.mu.lock().unwrap() = cfg;
+        Ok(warnings)
+    }
+
     pub fn reload(&self) -> (bool, Vec<String>) {
         let Ok(raw) = std::fs::read(&self.path) else {
             return (false, Vec::new());
@@ -306,5 +314,58 @@ impl Store {
         }
         *guard = std::mem::take(&mut next);
         (true, warnings)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_repairs_out_of_range_values() {
+        let mut cfg = Config::default();
+        cfg.logging.level = "verbose".to_string();
+        cfg.logging.retention_days = 0;
+        cfg.schedule.refresh_interval_ms = 1_000;
+        cfg.schedule.jitter_ratio = 2.0;
+        cfg.schedule.daily_summary_hour = Some(99);
+
+        let warnings = cfg.normalize();
+        assert_eq!(warnings.len(), 5);
+        assert_eq!(cfg.logging.level, "info");
+        assert_eq!(cfg.logging.retention_days, 7);
+        assert_eq!(cfg.schedule.refresh_interval_ms, 180_000);
+        assert_eq!(cfg.schedule.jitter_ratio, 0.1);
+        assert_eq!(cfg.schedule.daily_summary_hour, Some(21));
+    }
+
+    #[test]
+    fn store_round_trips_without_leaking_the_password() {
+        let dir = std::env::temp_dir().join(format!(
+            "seu-labor-core-config-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+
+        let (store, warnings) = Store::open(path.clone()).unwrap();
+        assert!(warnings.iter().any(|w| w.contains("未找到")));
+        store
+            .update(|c| {
+                c.credentials.username = "u".to_string();
+                c.credentials.password = "p".to_string();
+                c.behavior.auto_select = true;
+            })
+            .unwrap();
+
+        let (reloaded, _) = Store::open(path).unwrap();
+        assert_eq!(reloaded.get().credentials.username, "u");
+        assert!(reloaded.get().behavior.auto_select);
+        let summary = reloaded.get().safe_summary();
+        assert_eq!(summary["usernameConfigured"], true);
+        assert!(summary.get("password").is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

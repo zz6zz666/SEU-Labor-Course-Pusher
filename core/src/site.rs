@@ -325,3 +325,115 @@ fn redirected_to_auth(final_url: &str) -> bool {
     };
     u.host_str() == Some("auth.seu.edu.cn") || u.path().contains("AuthServer/Login")
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    fn page(enrollment: &str) -> String {
+        format!(
+            r#"<!doctype html><html><body>
+<table id="{table}"><tbody>
+<tr class="c--tr">
+<td><td-data data-name="SJItemID" data-value="item-1"></td-data><td-data data-name="SJItemKaiKeID" data-value="kaike-1"></td-data></td>
+<td>1</td>
+<td>f2</td>
+<td>课程A</td>
+<td>类别X</td>
+<td>f5</td>
+<td>f6</td>
+<td><div class="limit-line">九龙湖</div></td>
+<td>2026-11-01 08:00-10:00</td>
+<td>2026-10-30 12:00</td>
+<td>{enrollment}</td>
+<td>f11</td>
+<td>f12</td>
+<td>f13</td>
+<td>f14</td>
+<td>张老师</td>
+</tr>
+</tbody></table></body></html>"#,
+            table = COURSE_TABLE_ID,
+            enrollment = enrollment,
+        )
+    }
+
+    fn eligible_filters() -> FilterOptions {
+        FilterOptions {
+            location_whitelist: vec!["九龙湖".to_string()],
+            category_blacklist: vec!["讲座".to_string()],
+        }
+    }
+
+    #[test]
+    fn parses_one_eligible_row() {
+        let result = parse(&page("已选 1/10"), &eligible_filters());
+        assert!(result.table_found);
+        assert_eq!(result.row_count, 1);
+        let course = &result.courses[0];
+        assert_eq!(course.seq, "1");
+        assert_eq!(course.name, "课程A");
+        assert_eq!(course.category, "类别X");
+        assert_eq!(course.location, "九龙湖");
+        assert!(course.time.starts_with("2026-11-01 08:00-10:00"));
+        assert!(course.time.contains("（周"));
+        assert_eq!(course.enrollment, "已选 1/10");
+        assert_eq!(course.teacher, "张老师");
+        assert_eq!(course.item_id, "item-1");
+        assert_eq!(course.kai_ke_id, "kaike-1");
+        assert!(course.eligible());
+    }
+
+    #[test]
+    fn location_whitelist_and_category_blacklist_filter_rows() {
+        let wrong_location = FilterOptions {
+            location_whitelist: vec!["四牌楼".to_string()],
+            category_blacklist: Vec::new(),
+        };
+        let result = parse(&page("已选 1/10"), &wrong_location);
+        assert!(!result.courses[0].location_ok);
+        assert!(!result.courses[0].eligible());
+
+        let blacklisted = FilterOptions {
+            location_whitelist: Vec::new(),
+            category_blacklist: vec!["类别X".to_string()],
+        };
+        let result = parse(&page("已选 1/10"), &blacklisted);
+        assert!(!result.courses[0].category_ok);
+        assert!(!result.courses[0].eligible());
+    }
+
+    #[test]
+    fn full_enrollment_is_invalid() {
+        let result = parse(&page("已满"), &eligible_filters());
+        assert!(result.courses[0].invalid);
+        assert!(!result.courses[0].eligible());
+    }
+
+    #[test]
+    fn diff_and_reconcile_use_name_and_time() {
+        let result = parse(&page("已选 1/10"), &eligible_filters());
+        let course = &result.courses[0];
+
+        let new = diff_new(&result.courses, &HashSet::new());
+        assert_eq!(new.len(), 1);
+        assert_eq!(new[0].unique_id(), course.unique_id());
+
+        let mut pushed = HashSet::new();
+        pushed.insert(course.unique_id());
+        assert!(diff_new(&result.courses, &pushed).is_empty());
+
+        let kept = reconcile_pushed(&result.courses, &[course.unique_id()]);
+        assert_eq!(kept, vec![course.unique_id()]);
+    }
+
+    #[test]
+    fn a_missing_table_is_reported() {
+        let result = parse("<html><body>登录页</body></html>", &eligible_filters());
+        assert!(!result.table_found);
+        assert_eq!(result.row_count, 0);
+        assert!(result.courses.is_empty());
+    }
+}

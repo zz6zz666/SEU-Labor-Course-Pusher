@@ -1,8 +1,8 @@
 //! Notification channel fan-out.
 
+pub mod collect;
 pub mod event;
 pub mod pushplus;
-pub mod toast;
 
 use anyhow::Result;
 

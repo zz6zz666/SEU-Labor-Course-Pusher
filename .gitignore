@@ -24,3 +24,17 @@
 # editor
 .idea/
 .vscode/
+
+# local Android/JDK toolchain used for verification only
+/.toolchain/
+
+# Android build output
+/android/.gradle/
+/android/.kotlin/
+/android/.idea/
+/android/build/
+/android/app/build/
+/android/app/.cxx/
+/android/local.properties
+/android/keystore.properties
+/android/app/src/main/jniLibs/

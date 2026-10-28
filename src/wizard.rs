@@ -64,7 +64,9 @@ pub struct Actions {
 /// (WebView2 or a borrowed browser) loads the returned URL.
 pub fn open(actions: Actions) -> Result<Arc<webmsg::Server>> {
     let a = Arc::new(actions);
-    let handler: webmsg::Handler = Arc::new(move |name, data| dispatch(&a, name, data));
+    let handler: webmsg::Handler = Arc::new(move |name, data| {
+        dispatch(&a, name, data).map_err(webmsg::HostError::from)
+    });
     webmsg::serve(
         webmsg::Config {
             // Keep the page's original `window.seuWizard` namespace.
@@ -73,6 +75,7 @@ pub fn open(actions: Actions) -> Result<Arc<webmsg::Server>> {
             index_html: web::WIZARD_HTML.to_string(),
             icon_ico: assets::ICON_ICO,
             extra_csp: "connect-src 'self'; img-src 'self' data:;",
+            sync_object: None,
         },
         handler,
     )

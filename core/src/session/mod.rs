@@ -31,14 +31,16 @@ pub struct Client {
     agent: ureq::Agent,
 }
 
-/// Builds a ureq agent with the system TLS backend (SChannel on Windows) and
-/// manual redirects (we follow them ourselves to capture cookies and the final
-/// URL).
+/// Builds a ureq agent with manual redirects (we follow them ourselves to
+/// capture cookies and the final URL). Windows keeps the system trust store
+/// (SChannel); Android builds this crate with the `rustls` feature instead.
 pub fn build_agent(timeout: Duration) -> ureq::Agent {
-    let mut builder = ureq::AgentBuilder::new().timeout(timeout).redirects(0);
-    if let Ok(connector) = ureq::native_tls::TlsConnector::new() {
-        builder = builder.tls_connector(Arc::new(connector));
-    }
+    let builder = ureq::AgentBuilder::new().timeout(timeout).redirects(0);
+    #[cfg(feature = "native-tls")]
+    let builder = match ureq::native_tls::TlsConnector::new() {
+        Ok(connector) => builder.tls_connector(Arc::new(connector)),
+        Err(_) => builder,
+    };
     builder.build()
 }
 

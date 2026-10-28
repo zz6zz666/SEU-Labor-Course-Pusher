@@ -24,35 +24,6 @@ pub struct StoredCookie {
     pub http_only: bool,
 }
 
-impl StoredCookie {
-    /// Borrow as the browser engine's cookie shape, for CDP injection.
-    pub fn to_browser_cookie(&self) -> browserhost::Cookie {
-        browserhost::Cookie {
-            name: self.name.clone(),
-            value: self.value.clone(),
-            domain: self.domain.clone(),
-            path: self.path.clone(),
-            expires: self.expires,
-            secure: self.secure,
-            http_only: self.http_only,
-        }
-    }
-}
-
-impl From<browserhost::Cookie> for StoredCookie {
-    fn from(c: browserhost::Cookie) -> Self {
-        StoredCookie {
-            name: c.name,
-            value: c.value,
-            domain: c.domain,
-            path: c.path,
-            expires: c.expires,
-            secure: c.secure,
-            http_only: c.http_only,
-        }
-    }
-}
-
 pub struct Jar {
     mu: Mutex<Vec<StoredCookie>>,
     path: Option<PathBuf>,
@@ -97,7 +68,7 @@ impl Jar {
 
             let mut expires = 0i64;
             if let Some(ma) = c.max_age() {
-                if ma.whole_seconds() < 0 {
+                if ma.whole_seconds() <= 0 {
                     remove(&mut guard, c.name(), &domain, &path);
                     continue;
                 }
@@ -193,4 +164,44 @@ fn path_match(req_path: &str, cookie_path: &str) -> bool {
         return true;
     }
     req_path.starts_with(cookie_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use url::Url;
+
+    use super::*;
+
+    #[test]
+    fn keeps_session_cookies_and_honours_domain_and_path() {
+        let jar = Jar::empty();
+        let set_url = Url::parse("https://labor.seu.edu.cn/UnifiedAuth/CASLogin").unwrap();
+        jar.set_cookies(
+            &set_url,
+            &[
+                "sid=abc; Path=/; HttpOnly".to_string(),
+                "scoped=1; Domain=.seu.edu.cn; Path=/SJItemKaiKe".to_string(),
+            ],
+        );
+
+        let in_scope = Url::parse("https://labor.seu.edu.cn/SJItemKaiKe/XuanKe/Index").unwrap();
+        let header = jar.cookie_header(&in_scope).unwrap();
+        assert!(header.contains("sid=abc"));
+        assert!(header.contains("scoped=1"));
+
+        let out_of_path = Url::parse("https://labor.seu.edu.cn/other").unwrap();
+        let header = jar.cookie_header(&out_of_path).unwrap();
+        assert!(header.contains("sid=abc"));
+        assert!(!header.contains("scoped=1"));
+    }
+
+    #[test]
+    fn max_age_zero_removes_the_cookie() {
+        let jar = Jar::empty();
+        let url = Url::parse("https://labor.seu.edu.cn/").unwrap();
+        jar.set_cookies(&url, &["sid=abc; Path=/".to_string()]);
+        assert!(jar.cookie_header(&url).is_some());
+        jar.set_cookies(&url, &["sid=; Path=/; Max-Age=0".to_string()]);
+        assert!(jar.cookie_header(&url).is_none());
+    }
 }

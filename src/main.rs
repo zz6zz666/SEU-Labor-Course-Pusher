@@ -9,23 +9,19 @@
 mod assets;
 mod autostart;
 mod brand;
-mod config;
-mod fsutil;
-mod logging;
+mod browser_cookie;
 mod login;
-mod login_scripts;
-mod notify;
 mod osutil;
 mod paths;
 mod proc;
-mod selection;
-mod session;
 mod singleinstance;
-mod site;
-mod state;
-mod watcher;
+mod toast;
 mod web;
 mod wizard;
+
+pub use seu_labor_core::{
+    cas, config, logging, notify, selection, session, site, state, watcher,
+};
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -149,7 +145,7 @@ fn run(once: bool, do_login: bool, show_wizard: bool) -> Result<()> {
         store.clone(),
         logging::new("pushplus"),
     )));
-    dispatcher.add(Box::new(notify::toast::Toast::new(store.clone())));
+    dispatcher.add(Box::new(toast::Toast::new(store.clone())));
     let dispatcher = Arc::new(dispatcher);
 
     let selector = Arc::new(Runner {
@@ -335,12 +331,12 @@ fn try_silent_login(app: &Arc<App>) -> bool {
     if !cfg.behavior.auto_login || !cfg.has_credentials() {
         return false;
     }
-    let res = login::auto_run(
+    let res = cas::auto_run(
         &cfg.credentials.username,
         &cfg.credentials.password,
         &logging::new("login"),
     );
-    if res.outcome != login::AutoOutcome::Success {
+    if res.outcome != cas::AutoOutcome::Success {
         app.log
             .warn(format!("静默重登未成功: {:?} {}", res.outcome, res.detail));
         return false;
@@ -422,7 +418,7 @@ fn open_course_view(app: &Arc<App>) {
                 .jar
                 .all()
                 .iter()
-                .map(|c| c.to_browser_cookie())
+                .map(browser_cookie::to_browser)
                 .collect();
             if let Err(e) = win.set_cookies(&cookies) {
                 app.log.warn(format!("注入登录态失败: {}", e));
@@ -858,6 +854,7 @@ fn run_wizard_ui(url: &str, data_path: &str, browser: &str) -> Result<()> {
         icon_ico: assets::ICON_ICO,
         data_dir: data,
         browser_override: (!browser.trim().is_empty()).then(|| browser.to_string()),
+        additional_browser_arguments: None,
         profile_name: brand::TITLE.to_string(),
         chromeless: true,
         zoom: 1.0,

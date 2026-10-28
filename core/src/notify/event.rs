@@ -1,9 +1,12 @@
 //! Event formatting for notification channels (PushPlus markdown, desktop
 //! toast).
 
+use serde::Serialize;
+
 use crate::site::Course;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum EventType {
     NewCourse,
     AuthExpired,
@@ -24,6 +27,7 @@ impl EventType {
     }
 }
 
+#[derive(Clone, Serialize)]
 pub struct Event {
     pub kind: EventType,
     pub title: String,
@@ -178,5 +182,37 @@ pub fn build_daily_summary(s: &SummaryStats) -> Event {
             "抓取 {} 次 / 成功 {} 次\n新课程推送 {} 门,当前可选 {} 门\n登录态:{}",
             s.ticks, s.successes, s.pushed_new, s.current_valid_count, auth_text
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn course() -> Course {
+        Course {
+            seq: "1".to_string(),
+            name: "课程A".to_string(),
+            category: "类别X".to_string(),
+            location: "九龙湖".to_string(),
+            time: "2026-11-01 08:00-10:00（周日）".to_string(),
+            enrollment: "已选 1/10".to_string(),
+            teacher: "张老师".to_string(),
+            invalid: false,
+            location_ok: true,
+            category_ok: true,
+            item_id: "item-1".to_string(),
+            kai_ke_id: "kaike-1".to_string(),
+        }
+    }
+
+    #[test]
+    fn new_course_event_serializes_the_android_contract() {
+        let event = build_new_course(&[course()]);
+        let value = serde_json::to_value(&event).unwrap();
+        assert_eq!(value["kind"], "newCourse");
+        assert!(value["title"].as_str().unwrap().contains("1 门"));
+        assert!(value["body"].as_str().unwrap().contains("课程A"));
+        assert!(value["markdown"].as_str().unwrap().contains("| 1 | 课程A |"));
     }
 }

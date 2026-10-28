@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SEU 劳动教育课程助手</string>
+    <string name="a11y_desc">仅用于保持监控进程存活，不读取屏幕内容，也不代替用户操作。</string>
+</resources>

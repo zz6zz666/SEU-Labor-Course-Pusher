@@ -13,6 +13,7 @@
 - 自动选课（可选，默认关闭）
 - 托盘常驻、开机自启
 - 原生实现，无 GC／无运行时：单个约 3 MB 的可执行文件，不打包浏览器内核
+- 手机 Android 版：与桌面版共用同一套核心逻辑（登录、解析、选课、去重）
 
 ## 📦 安装
 
@@ -45,6 +46,19 @@ Chromium 的顺序探测，也可在 `config.json` 的 `browser.path` 中手动�
 - **会自动选课吗？** 默认关闭，需要手动开启。
 - **卸载后设置还在吗？** 在，保存在本机用户目录。
 
+## 📱 安卓版
+
+`android/` 是一个独立的 Android 工程，界面只做配置与状态展示，后台由
+`specialUse` 前台服务常驻轮询：
+
+- 系统 WebView 完成登录/看课，登录后把 Cookie 导入核心
+- 常驻通知显示最近一次抓取、可选课程数和下次抓取时间
+- 每次进入 App 检查通知权限与电池优化豁免，缺什么就弹系统授权
+- 开机自启 + WorkManager 看门狗 +（可选）无障碍保活
+- 主界面镜像桌面托盘的状态与操作，不额外保留课程列表
+
+账号、Cookie 和配置保存在应用私有目录，不参与系统备份。
+
 ## 🛠 构建
 
 需要 Rust（rustup，`x86_64-pc-windows-gnu` 工具链）；打包安装包另需 Inno Setup 6。
@@ -61,6 +75,17 @@ git clone https://github.com/zz6zz666/rust-webui-kit ..\rust-webui-kit
 
 > `WebView2Loader.dll`（随 `vendor\` 提供）会与主程序一起分发，供系统 WebView2 使用。
 
+安卓版另需 JDK 25 / Android SDK 36 / NDK 27+，以及：
+
+```powershell
+rustup target add aarch64-linux-android
+cargo install cargo-ndk
+```
+
+用 Android Studio 打开 `android/`，或在 `android/` 下执行
+`.\gradlew.bat :app:assembleDebug`；Gradle 的 `cargoBuild` 任务会自动调用
+`cargo ndk` 生成 `android/app/src/main/jniLibs/arm64-v8a/libseu_labor_core.so`。
+
 ## 🧩 架构与原理
 
 程序平时只发普通网络请求，几乎不启动浏览器。
@@ -76,13 +101,15 @@ git clone https://github.com/zz6zz666/rust-webui-kit ..\rust-webui-kit
 通用机制放在一个独立的可复用项目 **`rust-webui-kit`**（与本仓库同级，通过相对路径依赖），
 主程序只保留学校相关流程与页面：
 
+- `core/`：平台无关的 Rust 核心（`seu-labor-core`），被桌面端与 Android 端共同依赖。
 - `winkit`：通用 Win32 小工具（进程 DPI 感知与缩放、从 `.ico` 生成图标并设为窗口图标）。
 - `traykit`：托盘图标 + 自绘 Fluent 风格弹窗菜单；菜单内容由宿主以数据提供。
 - `browserhost`：定位、启动并驱动系统 Chromium（CDP），管理独立配置目录与 Cookie 注入。
 - `webmsg`：本地回环 HTTP 桥，把宿主 API 暴露给被托管的网页（请求 / 响应 / 事件信封）。
 - `websurface`：多窗口 Web UI 宿主，WebView2 引擎 + 借用 Chromium 兜底。
 
-依赖方向：`seu-labor` → `websurface` → { `webmsg`、`browserhost`、`winkit` }；`traykit` → `winkit`。
+依赖方向：`seu-labor` → `core`；`seu-labor` → `websurface` → { `webmsg`、`browserhost`、`winkit` }；
+`traykit` → `winkit`；Android 壳 → `core`（JNI）。
 
 ## 📄 许可
 
