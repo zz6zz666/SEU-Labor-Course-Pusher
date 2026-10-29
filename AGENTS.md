@@ -45,7 +45,7 @@ $env:Path = "$env:USERPROFILE\.cargo\bin;" + $env:Path
   ```powershell
   .\build.ps1 -Version 1.2.1
   ```
-- Installer (needs Inno Setup 6):
+- Installer (needs Inno Setup 6/7):
   ```powershell
   .\package.ps1 -Version 1.2.1
   ```

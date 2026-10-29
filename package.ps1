@@ -1,4 +1,4 @@
-# Builds the app and compiles a single-file setup.exe with Inno Setup 6.
+# Builds the app and compiles a single-file setup.exe with Inno Setup 6 or 7.
 # Output: release\seu-labor-setup-<version>.exe
 param(
     [string]$Version = "1.2.1",
@@ -11,14 +11,20 @@ $root = $PSScriptRoot
 Write-Host "==> building app ($Version)"
 & (Join-Path $root "build.ps1") -Version $Version -Output $Output
 
-$candidates = @(
-    (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"),
-    "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
-    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-)
-$iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+$iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue | Select-Object -First 1).Source
 if (-not $iscc) {
-    throw "未找到 Inno Setup 的 ISCC.exe，请先安装 Inno Setup 6（winget install JRSoftware.InnoSetup）。"
+    $candidates = @(
+        (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 7\ISCC.exe"),
+        "$env:ProgramFiles\Inno Setup 7\ISCC.exe",
+        "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe",
+        (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"),
+        "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+        "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+    )
+    $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+}
+if (-not $iscc) {
+    throw "未找到 Inno Setup 的 ISCC.exe，请先安装 Inno Setup 6/7（winget install JRSoftware.InnoSetup）。"
 }
 
 Write-Host "==> compiling installer with $iscc"
