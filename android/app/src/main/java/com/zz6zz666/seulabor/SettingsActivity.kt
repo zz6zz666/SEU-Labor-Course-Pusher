@@ -1,25 +1,33 @@
 package com.zz6zz666.seulabor
 
-import android.app.Activity
 import android.content.Intent
-import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
 import android.text.InputType
+import android.text.method.LinkMovementMethod
+import android.text.util.Linkify
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.View
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.RadioGroup
 import android.widget.ScrollView
-import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.appcompat.widget.AppCompatButton
+import androidx.appcompat.widget.AppCompatCheckBox
+import androidx.appcompat.widget.AppCompatEditText
+import androidx.appcompat.widget.AppCompatRadioButton
+import androidx.appcompat.widget.SwitchCompat
 import org.json.JSONArray
 import org.json.JSONObject
 
-class SettingsActivity : Activity() {
+class SettingsActivity : AppCompatActivity() {
     companion object {
         private val LABOR_TYPES = listOf("生活劳动", "服务劳动", "生产劳动")
     }
@@ -30,8 +38,8 @@ class SettingsActivity : Activity() {
     private lateinit var pushplusToken: EditText
     private lateinit var locations: EditText
     private val categoryChecks = linkedMapOf<String, CheckBox>()
-    private lateinit var autoLoginSwitch: Switch
-    private lateinit var autoSelectSwitch: Switch
+    private lateinit var autoLoginSwitch: SwitchCompat
+    private lateinit var autoSelectSwitch: SwitchCompat
     private lateinit var saveButton: Button
     private var originalUsername = ""
     private var originalPassword = ""
@@ -47,7 +55,7 @@ class SettingsActivity : Activity() {
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(24), dp(20), dp(32))
-            setBackgroundColor(Color.parseColor("#F7F8FA"))
+            setBackgroundColor(getColor(R.color.app_background))
         }
         root.addView(column)
 
@@ -55,7 +63,7 @@ class SettingsActivity : Activity() {
             text = "设置"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
             setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.parseColor("#141821"))
+            setTextColor(getColor(R.color.app_text_primary))
         })
 
         val credentials = config.optJSONObject("credentials") ?: JSONObject()
@@ -77,22 +85,41 @@ class SettingsActivity : Activity() {
         val pushplus = push?.optJSONObject("pushplus")
         pushplusToken = addField(
             column,
-            "PushPlus Token（可选，用于微信提醒）",
+            "PushPlus Token",
             pushplus?.optString("token", "") ?: ""
         )
+        pushplusToken.hint = "可选，留空即只用桌面通知"
+        val pushHint = TextView(this).apply {
+            text = "申请地址：www.pushplus.plus　微信扫码登录后，注册并复制 用户Token。\n" +
+                "（可能需要向 PushPlus 平台支付 1 元以激活微信推送功能）"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(getColor(R.color.app_text_tertiary))
+            setLineSpacing(dp(2).toFloat(), 1f)
+            setLinkTextColor(getColor(R.color.app_accent))
+            movementMethod = LinkMovementMethod.getInstance()
+        }
+        Linkify.addLinks(pushHint, Linkify.WEB_URLS)
+        column.addView(pushHint, fullWidth().apply { topMargin = dp(4) })
 
         val filters = config.optJSONObject("filters")
         locations = addField(
             column,
-            "开课地点白名单（逗号分隔，空 = 不过滤）",
+            "开课地点关键字",
             join(filters?.optJSONArray("locationWhitelist"))
         )
+        locations.hint = "例如：无锡、九龙湖、四牌楼、丁家桥（留空则不筛地点）"
+        column.addView(TextView(this).apply {
+            text = "多个关键字用逗号或空格分隔；开课地点包含任一关键字即命中。"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(getColor(R.color.app_text_tertiary))
+            setLineSpacing(dp(2).toFloat(), 1f)
+        }, fullWidth().apply { topMargin = dp(4) })
 
         val blocked = stringList(filters?.optJSONArray("categoryBlacklist"))
         column.addView(TextView(this).apply {
-            text = "劳动类型（只接收勾选的类型）"
+            text = "劳动类型"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setTextColor(Color.parseColor("#5B6270"))
+            setTextColor(getColor(R.color.app_text_secondary))
         }, fullWidth().apply { topMargin = dp(14) })
 
         val row = LinearLayout(this).apply {
@@ -100,7 +127,7 @@ class SettingsActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         for (type in LABOR_TYPES) {
-            val check = CheckBox(this).apply {
+            val check = AppCompatCheckBox(this).apply {
                 text = type
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 isChecked = type !in blocked
@@ -110,25 +137,65 @@ class SettingsActivity : Activity() {
         }
         column.addView(row, fullWidth().apply { topMargin = dp(2) })
         column.addView(TextView(this).apply {
-            text = "全部勾选或全部不勾选 = 不限制"
+            text = "勾选你想接收的类型；全部勾选或全部不勾选均表示不限制。"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor(Color.parseColor("#9AA0AC"))
+            setTextColor(getColor(R.color.app_text_tertiary))
+            setLineSpacing(dp(2).toFloat(), 1f)
         }, fullWidth().apply { topMargin = dp(4) })
 
         val behavior = config.optJSONObject("behavior") ?: JSONObject()
-        autoLoginSwitch = Switch(this).apply {
+        autoLoginSwitch = SwitchCompat(this).apply {
             text = "登录失效时自动重登"
             isChecked = behavior.optBoolean("autoLogin", true)
         }
         column.addView(autoLoginSwitch, fullWidth().apply { topMargin = dp(16) })
 
-        autoSelectSwitch = Switch(this).apply {
+        autoSelectSwitch = SwitchCompat(this).apply {
             text = "自动选课"
             isChecked = behavior.optBoolean("autoSelect", false)
         }
         column.addView(autoSelectSwitch, fullWidth().apply { topMargin = dp(8) })
 
-        saveButton = Button(this).apply {
+        column.addView(TextView(this).apply {
+            text = "外观（默认跟随系统）"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextColor(getColor(R.color.app_text_secondary))
+        }, fullWidth().apply { topMargin = dp(16) })
+
+        val themeIds = linkedMapOf<Int, String>()
+        val currentTheme = Prefs.themeMode(this)
+        val themeGroup = RadioGroup(this).apply {
+            orientation = RadioGroup.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        listOf(
+            Prefs.THEME_SYSTEM to "跟随系统",
+            Prefs.THEME_LIGHT to "浅色",
+            Prefs.THEME_DARK to "深色"
+        ).forEach { (mode, label) ->
+            val radio = AppCompatRadioButton(this).apply {
+                id = View.generateViewId()
+                text = label
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            }
+            themeIds[radio.id] = mode
+            themeGroup.addView(
+                radio,
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            )
+        }
+        themeIds.entries.firstOrNull { it.value == currentTheme }?.let {
+            themeGroup.check(it.key)
+        }
+        themeGroup.setOnCheckedChangeListener { _, id ->
+            val mode = themeIds[id] ?: return@setOnCheckedChangeListener
+            if (mode == Prefs.themeMode(this)) return@setOnCheckedChangeListener
+            Prefs.setThemeMode(this, mode)
+            AppCompatDelegate.setDefaultNightMode(App.nightMode(mode))
+        }
+        column.addView(themeGroup, fullWidth().apply { topMargin = dp(4) })
+
+        saveButton = AppCompatButton(this).apply {
             text = "保存"
             isAllCaps = false
             setOnClickListener { save() }
@@ -139,7 +206,7 @@ class SettingsActivity : Activity() {
         column.addView(TextView(this).apply {
             text = "账号与设置仅保存在本机应用私有目录。"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor(Color.parseColor("#9AA0AC"))
+            setTextColor(getColor(R.color.app_text_tertiary))
             gravity = Gravity.CENTER
         }, fullWidth().apply { topMargin = dp(16) })
 
@@ -155,10 +222,10 @@ class SettingsActivity : Activity() {
         column.addView(TextView(this).apply {
             text = label
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setTextColor(Color.parseColor("#5B6270"))
+            setTextColor(getColor(R.color.app_text_secondary))
         }, fullWidth().apply { topMargin = dp(14) })
 
-        val field = EditText(this).apply {
+        val field = AppCompatEditText(this).apply {
             setText(value)
             setSingleLine(true)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
@@ -288,14 +355,16 @@ class SettingsActivity : Activity() {
 
     private fun toArray(raw: String): JSONArray {
         val array = JSONArray()
-        raw.split(',', '，', ';').map(String::trim).filter { it.isNotEmpty() }
+        raw.split(Regex("[,，、;；\\s\\u3000]+"))
+            .map(String::trim)
+            .filter { it.isNotEmpty() }
             .forEach { array.put(it) }
         return array
     }
 
     private fun join(array: JSONArray?): String {
         if (array == null) return ""
-        return (0 until array.length()).map { array.optString(it) }.joinToString(", ")
+        return (0 until array.length()).map { array.optString(it) }.joinToString("，")
     }
 
     private fun stringList(array: JSONArray?): List<String> {

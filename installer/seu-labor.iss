@@ -3,7 +3,7 @@
 ; Produces a single per-user setup.exe (no admin required).
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.1.1"
+  #define MyAppVersion "1.2.1"
 #endif
 
 #define MyAppName "SEU 劳动教育课程推送助手"

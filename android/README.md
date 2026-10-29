@@ -47,9 +47,10 @@ wrapper 的发行包指向腾讯云镜像；如果网络环境不同，改
 | `BootReceiver.kt` | 开机/更新后拉起服务；失败则发“点击恢复”通知 |
 | `Watchdog.kt` | 15 分钟 WorkManager 心跳，发现服务停了就提醒 |
 | `MainActivity.kt` | 镜像桌面托盘的状态与操作，每次进入检查电池豁免 |
+| `MobileData.kt` | 可选的进程网络绑定，让请求在 Wi-Fi 下走移动数据 |
 | `LoginActivity.kt` | 系统 WebView 登录，抓取 Cookie 后交给 core |
 | `CourseActivity.kt` | 注入 Cookie 后打开选课页 |
-| `SettingsActivity.kt` | 账号、筛选、PushPlus、自动选课 |
+| `SettingsActivity.kt` | 账号、筛选、PushPlus、自动选课、外观 |
 | `KeepAliveAccessibilityService.kt` | 可选的进程保持器，不读取窗口内容 |
 
 ## 首次构建检查

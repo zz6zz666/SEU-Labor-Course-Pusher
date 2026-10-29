@@ -1,8 +1,6 @@
 package com.zz6zz666.seulabor
 
-import android.app.Activity
 import android.content.Intent
-import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
@@ -10,9 +8,10 @@ import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.LinearLayout
+import androidx.appcompat.app.AppCompatActivity
 import org.json.JSONArray
 
-class CourseActivity : Activity() {
+class CourseActivity : AppCompatActivity() {
     companion object {
         private const val COURSE_PAGE = "https://labor.seu.edu.cn/SJItemKaiKe/XuanKe/Index"
         private const val LOGIN_PAGE_SCRIPT = """
@@ -31,6 +30,7 @@ class CourseActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         web = WebView(this).apply {
+            setBackgroundColor(getColor(R.color.app_surface))
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.useWideViewPort = true
@@ -56,7 +56,7 @@ class CourseActivity : Activity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(getColor(R.color.app_background))
         }
         root.addView(web, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         setContentView(root)

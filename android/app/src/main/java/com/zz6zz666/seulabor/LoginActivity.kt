@@ -1,8 +1,6 @@
 package com.zz6zz666.seulabor
 
-import android.app.Activity
 import android.content.Intent
-import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.util.TypedValue
@@ -13,15 +11,16 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.AppCompatButton
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
-class LoginActivity : Activity() {
+class LoginActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_RETURN_TO_COURSE = "return_to_course"
         private const val CAS_URL =
@@ -44,7 +43,7 @@ class LoginActivity : Activity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(getColor(R.color.app_background))
         }
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -54,9 +53,9 @@ class LoginActivity : Activity() {
         bar.addView(TextView(this).apply {
             text = "完成登录后点右侧按钮"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor(Color.parseColor("#5B6270"))
+            setTextColor(getColor(R.color.app_text_secondary))
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        bar.addView(Button(this).apply {
+        bar.addView(AppCompatButton(this).apply {
             text = "已完成登录"
             isAllCaps = false
             setOnClickListener { completeLogin() }
@@ -64,6 +63,7 @@ class LoginActivity : Activity() {
         root.addView(bar, LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
 
         web = WebView(this).apply {
+            setBackgroundColor(getColor(R.color.app_surface))
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.useWideViewPort = true

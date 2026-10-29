@@ -1,19 +1,17 @@
 package com.zz6zz666.seulabor
 
-import android.app.Activity
 import android.content.Intent
-import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
 import android.util.TypedValue
-import android.view.ViewGroup
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.AppCompatButton
 import java.io.File
 
-class LogsActivity : Activity() {
+class LogsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val dir = File(filesDir, "logs")
@@ -26,15 +24,15 @@ class LogsActivity : Activity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(getColor(R.color.app_background))
             setPadding(dp(16), dp(16), dp(16), dp(16))
         }
         root.addView(TextView(this).apply {
             this.text = latest?.absolutePath ?: "日志目录：${dir.absolutePath}"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-            setTextColor(Color.parseColor("#9AA0AC"))
+            setTextColor(getColor(R.color.app_text_tertiary))
         })
-        root.addView(Button(this).apply {
+        root.addView(AppCompatButton(this).apply {
             this.text = "分享日志"
             isAllCaps = false
             setOnClickListener {
@@ -54,7 +52,7 @@ class LogsActivity : Activity() {
             this.text = text
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
             typeface = Typeface.MONOSPACE
-            setTextColor(Color.parseColor("#303540"))
+            setTextColor(getColor(R.color.app_log_text))
         })
         root.addView(scroll, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f

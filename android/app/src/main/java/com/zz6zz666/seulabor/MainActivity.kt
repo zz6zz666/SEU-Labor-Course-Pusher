@@ -1,11 +1,8 @@
 package com.zz6zz666.seulabor
 
 import android.Manifest
-import android.app.Activity
-import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Color
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
@@ -18,9 +15,12 @@ import android.view.Gravity
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.AppCompatButton
+import androidx.appcompat.widget.SwitchCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import org.json.JSONObject
@@ -31,12 +31,13 @@ object KeepAliveGate {
     var lastBatteryPromptAt: Long = 0L
 }
 
-class MainActivity : Activity() {
+class MainActivity : AppCompatActivity() {
     private lateinit var statusTitle: TextView
     private lateinit var statusDetail: TextView
     private lateinit var keepAliveText: TextView
-    private lateinit var autoStartSwitch: Switch
-    private lateinit var autoSelectSwitch: Switch
+    private lateinit var autoStartSwitch: SwitchCompat
+    private lateinit var autoSelectSwitch: SwitchCompat
+    private lateinit var forceMobileSwitch: SwitchCompat
 
     private var navigating = false
     private val listener: (String) -> Unit = { render(it) }
@@ -92,7 +93,7 @@ class MainActivity : Activity() {
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(24), dp(20), dp(32))
-            setBackgroundColor(Color.parseColor("#F7F8FA"))
+            setBackgroundColor(getColor(R.color.app_background))
         }
         root.addView(column)
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
@@ -106,7 +107,7 @@ class MainActivity : Activity() {
             text = "课程监控"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
             setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.parseColor("#141821"))
+            setTextColor(getColor(R.color.app_text_primary))
         })
 
         val card = LinearLayout(this).apply {
@@ -117,11 +118,11 @@ class MainActivity : Activity() {
         statusTitle = TextView(this).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
             setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.parseColor("#141821"))
+            setTextColor(getColor(R.color.app_text_primary))
         }
         statusDetail = TextView(this).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setTextColor(Color.parseColor("#5B6270"))
+            setTextColor(getColor(R.color.app_text_secondary))
             setLineSpacing(dp(2).toFloat(), 1f)
         }
         card.addView(statusTitle)
@@ -161,7 +162,7 @@ class MainActivity : Activity() {
         )
         column.addView(secondary, fullWidth().apply { topMargin = dp(10) })
 
-        val autoStartSwitch = Switch(this).apply {
+        val autoStartSwitch = SwitchCompat(this).apply {
             text = "开机自启"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             isChecked = Prefs.isAutoStart(this@MainActivity)
@@ -172,7 +173,7 @@ class MainActivity : Activity() {
         this.autoStartSwitch = autoStartSwitch
         column.addView(autoStartSwitch, fullWidth().apply { topMargin = dp(16) })
 
-        val autoSelectSwitch = Switch(this).apply {
+        val autoSelectSwitch = SwitchCompat(this).apply {
             text = "自动选课"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             val cfg = runCatching { JSONObject(CoreBridge.nativeGetConfig()) }.getOrNull()
@@ -191,11 +192,11 @@ class MainActivity : Activity() {
             text = "保活状态"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.parseColor("#141821"))
+            setTextColor(getColor(R.color.app_text_primary))
         })
         keepAliveText = TextView(this).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setTextColor(Color.parseColor("#5B6270"))
+            setTextColor(getColor(R.color.app_text_secondary))
             setLineSpacing(dp(3).toFloat(), 1f)
         }
         keepCard.addView(keepAliveText, fullWidth().apply { topMargin = dp(6) })
@@ -204,13 +205,28 @@ class MainActivity : Activity() {
         })
         column.addView(keepCard, fullWidth().apply { topMargin = dp(18) })
 
+        forceMobileSwitch = SwitchCompat(this).apply {
+            text = "Wi-Fi 下强制使用移动数据"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            isChecked = Prefs.isForceMobileData(this@MainActivity)
+            setOnCheckedChangeListener { _, value ->
+                MobileData.setEnabled(this@MainActivity, value)
+            }
+        }
+        column.addView(forceMobileSwitch, fullWidth().apply { topMargin = dp(16) })
+        column.addView(TextView(this).apply {
+            text = "开启后应用的网络请求绑定到移动数据；默认关闭。"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(getColor(R.color.app_text_tertiary))
+        }, fullWidth().apply { topMargin = dp(4) })
+
         val version = runCatching {
             packageManager.getPackageInfo(packageName, 0).versionName
         }.getOrNull()
         column.addView(TextView(this).apply {
             text = "版本 $version"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor(Color.parseColor("#9AA0AC"))
+            setTextColor(getColor(R.color.app_text_tertiary))
             gravity = Gravity.CENTER
         }, fullWidth().apply { topMargin = dp(24) })
 
@@ -218,7 +234,7 @@ class MainActivity : Activity() {
     }
 
     private fun actionButton(text: String, onClick: () -> Unit): Button =
-        Button(this).apply {
+        AppCompatButton(this).apply {
             this.text = text
             isAllCaps = false
             setOnClickListener { onClick() }
@@ -231,7 +247,7 @@ class MainActivity : Activity() {
     }
 
     private fun smallButton(text: String, onClick: () -> Unit): Button =
-        Button(this).apply {
+        AppCompatButton(this).apply {
             this.text = text
             isAllCaps = false
             setOnClickListener { onClick() }
@@ -277,6 +293,7 @@ class MainActivity : Activity() {
 
     private fun refreshSwitches() {
         autoStartSwitch.isChecked = Prefs.isAutoStart(this)
+        forceMobileSwitch.isChecked = Prefs.isForceMobileData(this)
         val autoSelect = runCatching {
             JSONObject(CoreBridge.nativeGetConfig())
                 .optJSONObject("behavior")

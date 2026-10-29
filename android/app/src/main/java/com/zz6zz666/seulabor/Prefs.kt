@@ -6,7 +6,13 @@ object Prefs {
     private const val NAME = "seu_labor"
     private const val KEY_MONITORING = "monitoringEnabled"
     private const val KEY_AUTO_START = "autoStart"
+    private const val KEY_FORCE_MOBILE_DATA = "forceMobileData"
+    private const val KEY_THEME = "themeMode"
     private const val KEY_LAST_TICK = "lastTickAt"
+
+    const val THEME_SYSTEM = "system"
+    const val THEME_LIGHT = "light"
+    const val THEME_DARK = "dark"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(NAME, Context.MODE_PRIVATE)
@@ -23,6 +29,20 @@ object Prefs {
 
     fun setAutoStart(context: Context, value: Boolean) {
         prefs(context).edit().putBoolean(KEY_AUTO_START, value).apply()
+    }
+
+    fun isForceMobileData(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_FORCE_MOBILE_DATA, false)
+
+    fun setForceMobileData(context: Context, value: Boolean) {
+        prefs(context).edit().putBoolean(KEY_FORCE_MOBILE_DATA, value).apply()
+    }
+
+    fun themeMode(context: Context): String =
+        prefs(context).getString(KEY_THEME, THEME_SYSTEM) ?: THEME_SYSTEM
+
+    fun setThemeMode(context: Context, value: String) {
+        prefs(context).edit().putString(KEY_THEME, value).apply()
     }
 
     fun lastTickAt(context: Context): Long =

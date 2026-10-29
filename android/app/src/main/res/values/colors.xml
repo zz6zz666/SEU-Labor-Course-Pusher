@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="app_background">#F7F8FA</color>
+    <color name="app_surface">#FFFFFF</color>
+    <color name="app_text_primary">#141821</color>
+    <color name="app_text_secondary">#5B6270</color>
+    <color name="app_text_tertiary">#9AA0AC</color>
+    <color name="app_stroke">#E6E9F0</color>
+    <color name="app_accent">#2F6FED</color>
+    <color name="app_log_text">#303540</color>
+</resources>

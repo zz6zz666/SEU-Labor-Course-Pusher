@@ -43,11 +43,11 @@ $env:Path = "$env:USERPROFILE\.cargo\bin;" + $env:Path
   ```
 - Release build (also copies the exe to `release\`):
   ```powershell
-  .\build.ps1 -Version 1.2.0
+  .\build.ps1 -Version 1.2.1
   ```
 - Installer (needs Inno Setup 6):
   ```powershell
-  .\package.ps1 -Version 1.2.0
+  .\package.ps1 -Version 1.2.1
   ```
 - Smoke test (launches the real app/tray/windows):
   ```powershell

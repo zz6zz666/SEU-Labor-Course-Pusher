@@ -4,7 +4,7 @@ resolver = "3"
 
 [package]
 name = "seu-labor"
-version = "1.2.0"
+version = "1.2.1"
 edition = "2024"
 description = "SEU 劳动教育课程推送助手"
 license = "MIT"

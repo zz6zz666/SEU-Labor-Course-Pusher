@@ -17,7 +17,7 @@
 
 ## 📦 安装
 
-下载 `seu-labor-setup-1.2.0.exe`，双击安装：
+下载 `seu-labor-setup-1.2.1.exe`，双击安装：
 
 - 免管理员，按当前用户安装
 - 自动创建开始菜单快捷方式（桌面快捷方式可选）
@@ -55,6 +55,8 @@ Chromium 的顺序探测，也可在 `config.json` 的 `browser.path` 中手动�
 - 常驻通知显示最近一次抓取、可选课程数和下次抓取时间
 - 每次进入 App 检查通知权限与电池优化豁免，缺什么就弹系统授权
 - 开机自启 + WorkManager 看门狗 +（可选）无障碍保活
+- 深色模式（默认跟随系统，也可固定浅色 / 深色）
+- 可选「Wi-Fi 下强制使用移动数据」
 - 主界面镜像桌面托盘的状态与操作，不额外保留课程列表
 
 账号、Cookie 和配置保存在应用私有目录，不参与系统备份。
@@ -69,8 +71,8 @@ git clone https://github.com/zz6zz666/rust-webui-kit ..\rust-webui-kit
 ```
 
 ```powershell
-.\build.ps1 -Version 1.2.0      # 主程序: release\seu-labor.exe
-.\package.ps1                   # 安装包: release\seu-labor-setup-1.2.0.exe
+.\build.ps1 -Version 1.2.1      # 主程序: release\seu-labor.exe
+.\package.ps1                   # 安装包: release\seu-labor-setup-1.2.1.exe
 ```
 
 > `WebView2Loader.dll`（随 `vendor\` 提供）会与主程序一起分发，供系统 WebView2 使用。
