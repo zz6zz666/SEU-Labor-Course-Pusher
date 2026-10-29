@@ -2,10 +2,14 @@ package com.zz6zz666.seulabor
 
 import android.content.Intent
 import android.graphics.Typeface
+import android.net.Uri
 import android.os.Bundle
 import android.text.InputType
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.TextPaint
 import android.text.method.LinkMovementMethod
-import android.text.util.Linkify
+import android.text.style.ClickableSpan
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -30,6 +34,8 @@ import org.json.JSONObject
 class SettingsActivity : AppCompatActivity() {
     companion object {
         private val LABOR_TYPES = listOf("生活劳动", "服务劳动", "生产劳动")
+        private const val PUSHPLUS_URL = "https://www.pushplus.plus"
+        private const val PUSHPLUS_LINK = "www.pushplus.plus"
     }
 
     private lateinit var config: JSONObject
@@ -89,16 +95,38 @@ class SettingsActivity : AppCompatActivity() {
             pushplus?.optString("token", "") ?: ""
         )
         pushplusToken.hint = "可选，留空即只用桌面通知"
+        val pushText = "申请地址：$PUSHPLUS_LINK　微信扫码登录后，注册并复制 用户Token。" +
+            "（可能需要向 PushPlus 平台支付 1 元以激活微信推送功能）"
+        val pushSpan = SpannableString(pushText).apply {
+            val start = pushText.indexOf(PUSHPLUS_LINK)
+            if (start >= 0) {
+                setSpan(object : ClickableSpan() {
+                    override fun onClick(widget: View) {
+                        runCatching {
+                            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PUSHPLUS_URL)))
+                        }.onFailure {
+                            Toast.makeText(
+                                this@SettingsActivity,
+                                "无法打开浏览器",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+
+                    override fun updateDrawState(ds: TextPaint) {
+                        ds.color = getColor(R.color.app_accent)
+                        ds.isUnderlineText = false
+                    }
+                }, start, start + PUSHPLUS_LINK.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+        }
         val pushHint = TextView(this).apply {
-            text = "申请地址：www.pushplus.plus　微信扫码登录后，注册并复制 用户Token。\n" +
-                "（可能需要向 PushPlus 平台支付 1 元以激活微信推送功能）"
+            text = pushSpan
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             setTextColor(getColor(R.color.app_text_tertiary))
             setLineSpacing(dp(2).toFloat(), 1f)
-            setLinkTextColor(getColor(R.color.app_accent))
             movementMethod = LinkMovementMethod.getInstance()
         }
-        Linkify.addLinks(pushHint, Linkify.WEB_URLS)
         column.addView(pushHint, fullWidth().apply { topMargin = dp(4) })
 
         val filters = config.optJSONObject("filters")

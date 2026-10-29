@@ -412,7 +412,7 @@
             <div class="field" style="margin-top: 12px">
               <label for="in-token">PushPlus Token</label>
               <input id="in-token" type="text" autocomplete="off" spellcheck="false" placeholder="可选，留空即只用桌面通知" />
-              <div class="hint">申请地址：<a class="link" id="link-pushplus">www.pushplus.plus</a>　微信扫码登录后，注册并复制 <b>用户Token</b>。<br />（可能需要向 PushPlus 平台支付 1 元以激活微信推送功能）</div>
+              <div class="hint">申请地址：<a class="link" id="link-pushplus">www.pushplus.plus</a>　微信扫码登录后，注册并复制 <b>用户Token</b>。（可能需要向 PushPlus 平台支付 1 元以激活微信推送功能）</div>
             </div>
           </section>
 
@@ -771,7 +771,7 @@
       $('btn-open-course').addEventListener('click', () => window.seuWizard.openCourse());
       $('link-config-welcome').addEventListener('click', () => window.seuWizard.openConfig());
       $('link-config-account').addEventListener('click', () => window.seuWizard.openConfig());
-      $('link-pushplus').addEventListener('click', () => window.seuWizard.openExternal('http://www.pushplus.plus'));
+      $('link-pushplus').addEventListener('click', () => window.seuWizard.openExternal('https://www.pushplus.plus'));
       $('link-author').addEventListener('click', () => window.seuWizard.openExternal('https://github.com/zz6zz666'));
 
       document.querySelectorAll('.step').forEach((el) => {
